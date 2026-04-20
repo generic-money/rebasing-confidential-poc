@@ -5,7 +5,7 @@ import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {FHE, externalEuint128, euint128, ebool} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, externalEuint256, externalEuint128, euint256, euint128, ebool} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 
 import {ERC7984Utils} from "./utils/ERC7984Utils.sol";
@@ -26,6 +26,8 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         euint128 encryptedAmount;
     }
     mapping(uint256 requestId => UnwrapRequest) private _unwrapRequests;
+
+    mapping(address => euint256) private _privateSecret;
 
     string public name;
     string public symbol;
@@ -292,5 +294,111 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         emit ConfidentialTransfer(from, to, transferred);
     }
 
+    // Multi-transfer
+
+    /// @dev sender addresses must be initialized (i.e. non-zero balance, encrypted zero balance is allowed)
+    function privateTransfer(
+        address[] memory from,
+        address[] memory to,
+        externalEuint128 encryptedSenderChange,
+        externalEuint128[] calldata encryptedReceiverChanges,
+        externalEuint256 encryptedSenderCommitment,
+        bytes calldata inputProof
+    ) external {
+        // Array input checks
+        uint256 totalSenderChanges = from.length;
+        require(totalSenderChanges <= type(uint8).max, "Too many senders");
+        require(totalSenderChanges > 0, "At least one sender required");
+        uint256 totalReceiverChanges = to.length;
+        require(totalReceiverChanges == encryptedReceiverChanges.length, "Length mismatch");
+        require(totalReceiverChanges > 0, "At least one receiver required");
+
+        uint256 inputHash = uint256(keccak256(abi.encode(from, to, encryptedSenderChange, encryptedReceiverChanges)));
+
+        // Validate inputs
+        euint128 senderChange = FHE.fromExternal(encryptedSenderChange, inputProof);
+        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, inputProof);
+
+        ebool senderFound = FHE.asEbool(false);
+        euint128[] memory senderChanges = new euint128[](totalSenderChanges);
+        for (uint256 i; i < totalSenderChanges; ++i) {
+            address _from = from[i];
+            require(_from != address(0), ERC7984InvalidSender(address(0)));
+            if (i > 0) require(uint160(from[i - 1]) < uint160(_from), "Not sorted"); // enforce strictly increasing order to prevent duplicates
+
+            euint256 txSecret = FHE.xor(_privateSecret[_from], inputHash);
+            ebool isSender = FHE.eq(senderCommitment, txSecret);
+            senderFound = FHE.or(senderFound, isSender);
+            senderChanges[i] = FHE.select(isSender, senderChange, FHE.asEuint128(0));
+        }
+
+        euint128[] memory receiverChanges = new euint128[](totalReceiverChanges);
+        euint128 sumReceiverChanges;
+        for (uint256 i; i < totalReceiverChanges; ++i) {
+            address _to = to[i];
+            require(_to != address(0), ERC7984InvalidReceiver(address(0)));
+            if (i > 0) require(uint160(to[i - 1]) < uint160(_to), "Not sorted"); // enforce strictly increasing order to prevent duplicates
+
+            receiverChanges[i] = FHE.fromExternal(encryptedReceiverChanges[i], inputProof);
+            sumReceiverChanges = FHE.add(sumReceiverChanges, receiverChanges[i]);
+        }
+
+        ebool amountsMatch = FHE.eq(senderChange, sumReceiverChanges);
+        ebool inputsValid = FHE.and(senderFound, amountsMatch);
+
+        // Inputs are valid when:
+        // - sender index is in range
+        // - sender change matches sum of receiver changes
+        // - sender secret is valid
+
+        // Following invariants hold implicitly:
+        // - sender changes is list of zeros with at most one non-zero value (i.e. only one sender)
+        // - receiver changes are non-negative
+
+        // At this point we have:
+        // - list of senders with their respective changes, where only one sender has non-zero change
+        // - list of receivers with their respective changes, where all changes are non-negative, and their sum matches the non-zero sender change
+
+        // Decrese senders balance
+        // Note: Only one sender has a non-zero change, so sender changes can be invalid only if the sender has insufficient balance.
+        // In that case zero is used as change amount, so balances won't be updated for any sender and no rollback is needed.
+        ebool allSenderChangesValid = FHE.asEbool(true);
+        for (uint256 i; i < totalSenderChanges; ++i) {
+            address _from = from[i];
+            euint128 fromBalance = _balances[_from];
+            euint128 amount = FHE.select(inputsValid, senderChanges[i], FHE.asEuint128(0));
+
+            require(FHE.isInitialized(fromBalance), ERC7984ZeroBalance(_from));
+            (ebool changeValid, euint128 newBalance) = FHESafeMath.tryDecrease(fromBalance, amount);
+            allSenderChangesValid = FHE.and(allSenderChangesValid, changeValid);
+
+            FHE.allowThis(newBalance);
+            FHE.allow(newBalance, _from);
+            _balances[_from] = newBalance;
+        }
+
+        // Increase receivers balance
+        for (uint256 i; i < totalReceiverChanges; ++i) {
+            address _to = to[i];
+            // Adjust balance change in case of invalid sender changes
+            euint128 amount = FHE.select(FHE.and(inputsValid, allSenderChangesValid), receiverChanges[i], FHE.asEuint128(0));
+            euint128 newBalance = FHE.add(_balances[_to], amount);
+
+            FHE.allowThis(newBalance);
+            FHE.allow(newBalance, _to);
+            _balances[_to] = newBalance;
+        }
+
+        // todo: emit event
+    }
+
+    function updateSecret(externalEuint256 encryptedNewSecret, bytes calldata inputProof) external {
+        euint256 newSecret = FHE.fromExternal(encryptedNewSecret, inputProof);
+        _privateSecret[msg.sender] = newSecret;
+        FHE.allowThis(newSecret);
+        // users are prevented from fetching their secret
+        // they should set a new one if they lost the old one instead
+
+        // todo: emit event
     }
 }
