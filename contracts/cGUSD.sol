@@ -15,15 +15,9 @@ import {IERC7984} from "./interfaces/IERC7984.sol";
 contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
     using SafeERC20 for IERC20;
 
-    uint128 public multiplier;
-    mapping(address holder => uint128) public userMultipliers;
-
-    uint128 private _sharesSupply; // must be plain value or we can't calcualte public multiplier
-    mapping(address holder => euint128) private _shares;
-    mapping(address holder => mapping(address spender => uint48)) private _operators;
-
     euint128 private _totalSupply;
     mapping(address holder => euint128) private _balances;
+    mapping(address holder => mapping(address spender => uint48)) private _operators;
 
     uint256 lastRequestId;
 
@@ -58,8 +52,6 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         name = name_;
         symbol = symbol_;
         contractURI = contractURI_;
-
-        multiplier = 1e18;
     }
 
     /// @inheritdoc ERC165
@@ -71,42 +63,12 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         return 18;
     }
 
-    /// @dev multiplier with 18 decimals
-    function syncMultiplier() public {
-        if (_sharesSupply != 0) {
-            multiplier = uint128(unitToken.balanceOf(address(this))) * 1e18 / _sharesSupply;
-            _updateTotalSupply();
-        }
-    }
-
-    function syncUserBalance(address user) public {
-        if (user != address(0)) {
-            uint128 _multiplier = multiplier;
-            userMultipliers[user] = _multiplier;
-            _balances[user] = FHE.div(FHE.mul(_shares[user], _multiplier), 1e18);
-            FHE.allowThis(_balances[user]);
-            FHE.allow(_balances[user], user);
-        }
-    }
-
-    function isUpToDate(address user) public view returns (bool) {
-        return userMultipliers[user] == multiplier;
-    }
-
     function confidentialTotalSupply() public view virtual returns (euint128) {
         return _totalSupply;
     }
 
     function confidentialBalanceOf(address account) public view virtual returns (euint128) {
         return _balances[account];
-    }
-
-    function totalSharesSupply() public view virtual returns (uint128) {
-        return _sharesSupply;
-    }
-
-    function confidentialSharesOf(address account) public view virtual returns (euint128) {
-        return _shares[account];
     }
 
     function isOperator(address holder, address spender) public view virtual returns (bool) {
@@ -237,8 +199,6 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
     /// todo: owner and spender
     function wrap(uint128 amount) external returns (euint128 transferred) {
         unitToken.safeTransferFrom(msg.sender, address(this), amount);
-        _sharesSupply += amount * 1e18 / multiplier;
-        _updateTotalSupply();
         return _update(address(0), msg.sender, FHE.asEuint128(amount));
     }
 
@@ -261,8 +221,6 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         UnwrapRequest memory request = _unwrapRequests[requestId];
         delete _unwrapRequests[requestId];
         discloseEncryptedAmount(request.encryptedAmount, amount, decryptionProof);
-        _sharesSupply -= amount * 1e18 / multiplier;
-        _updateTotalSupply();
         unitToken.safeTransfer(request.owner, amount);
     }
 
@@ -308,26 +266,23 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
     function _update(address from, address to, euint128 amount) internal virtual returns (euint128 transferred) {
         ebool success;
         euint128 ptr;
-        euint128 shares = FHE.div(FHE.mul(amount, 1e18), multiplier);
 
         if (from != address(0)) {
-            euint128 fromShares = _shares[from];
-            require(FHE.isInitialized(fromShares), ERC7984ZeroBalance(from));
-            (success, ptr) = FHESafeMath.tryDecrease(fromShares, shares);
+            euint128 fromBalance = _balances[from];
+            require(FHE.isInitialized(fromBalance), ERC7984ZeroBalance(from));
+            (success, ptr) = FHESafeMath.tryDecrease(fromBalance, amount);
             FHE.allowThis(ptr);
             FHE.allow(ptr, from);
-            _shares[from] = ptr;
-            syncUserBalance(from);
+            _balances[from] = ptr;
         } else {
             success = FHE.asEbool(true);
         }
 
         if (to != address(0)) {
-            ptr = FHE.add(_shares[to], FHE.select(success, shares, FHE.asEuint128(0)));
+            ptr = FHE.add(_balances[to], FHE.select(success, amount, FHE.asEuint128(0)));
             FHE.allowThis(ptr);
             FHE.allow(ptr, to);
-            _shares[to] = ptr;
-            syncUserBalance(to);
+            _balances[to] = ptr;
         }
 
         transferred = FHE.select(success, amount, FHE.asEuint128(0));
@@ -337,8 +292,5 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         emit ConfidentialTransfer(from, to, transferred);
     }
 
-    function _updateTotalSupply() internal {
-        _totalSupply = FHE.asEuint128(_sharesSupply * multiplier / 1e18);
-        FHE.allowThis(_totalSupply);
     }
 }
