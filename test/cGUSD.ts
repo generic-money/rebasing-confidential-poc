@@ -3,6 +3,11 @@ import { ethers, fhevm } from "hardhat";
 import { CGUSD, MockERC20, CGUSD__factory, MockERC20__factory } from "../types";
 import { expect } from "chai";
 import { FhevmType } from "@fhevm/hardhat-plugin";
+import {
+  initSDK,
+  createInstance,
+  SepoliaConfig,
+} from '@zama-fhe/relayer-sdk/bundle';
 
 type Signers = {
   deployer: HardhatEthersSigner;
@@ -27,6 +32,64 @@ async function deployCGUSD(unitToken: string) {
   return { cGUSDContract, cGUSDContractAddress };
 }
 
+async function fetchClearBalance(cGUSDContract: CGUSD, signer: HardhatEthersSigner) {
+    let encryptedBalance = await cGUSDContract.confidentialBalanceOf(signer.address);
+    return fhevm.userDecryptEuint(
+        FhevmType.euint128,
+        encryptedBalance,
+        await cGUSDContract.getAddress(),
+        signer,
+    );
+}
+
+async function updateSecret(cGUSDContract: CGUSD, signer: HardhatEthersSigner, secret: BigInt) {
+    const encryptedSecret = await fhevm
+        .createEncryptedInput(await cGUSDContract.getAddress(), signer.address)
+        .add256(secret)
+        .encrypt();
+
+    const secretTx = await cGUSDContract.connect(signer).updateSecret(
+        encryptedSecret.handles[0],
+        encryptedSecret.inputProof
+    );
+    await secretTx.wait();
+}
+
+async function privateTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, from: string[], to: string[], clearTransferAmount: number, clearReceiverChanges: number[]) {
+    const cGUSDContractAddress = await cGUSDContract.getAddress();
+    const encryptedTransferAmounts = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, relayer.address)
+      .add128(clearTransferAmount)
+      .add128(clearReceiverChanges[0])
+      .add128(clearReceiverChanges[1])
+      .add128(clearReceiverChanges[2])
+      .encrypt();
+
+    const encAmountHandle = encryptedTransferAmounts.handles[0];
+    const encReceiverChanges = [encryptedTransferAmounts.handles[1], encryptedTransferAmounts.handles[3], encryptedTransferAmounts.handles[2]];
+
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [from, to, encAmountHandle, encReceiverChanges]);
+    const inputHash = ethers.keccak256(encodedInput);
+    const commitment = BigInt(secret) ^ BigInt(inputHash);
+
+    const encryptedTransferCommitment = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, relayer.address)
+      .add256(commitment)
+      .encrypt();
+
+    const privateTransferTx = await cGUSDContract.connect(relayer).privateTransfer(
+        from,
+        to,
+        encAmountHandle,
+        encReceiverChanges,
+        encryptedTransferAmounts.inputProof,
+        encryptedTransferCommitment.handles[0],
+        encryptedTransferCommitment.inputProof,
+    );
+    await privateTransferTx.wait();
+}
+
 describe("cGUSD", function () {
   let signers: Signers;
   let mockERC20Contract: MockERC20;
@@ -35,12 +98,13 @@ describe("cGUSD", function () {
   let cGUSDContractAddress: string;
   let initialSupply: number = 1000;
   let receivers: HardhatEthersSigner[];
+  let relayer: HardhatEthersSigner;
 
   before(async function () {
     const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
     signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], clark: ethSigners[3] };
-
     receivers = [ethSigners[4], ethSigners[5], ethSigners[6]];
+    relayer = ethSigners[7];
   });
 
   beforeEach(async function () {
@@ -169,111 +233,21 @@ describe("cGUSD", function () {
   it("execute private transfer", async function() {
     // set secret
     const secret = BigInt(1);
-    const encryptedSecret = await fhevm
-        .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
-        .add256(secret)
-        .encrypt();
-
-    const secretTx = await cGUSDContract.connect(signers.alice).updateSecret(
-        encryptedSecret.handles[0],
-        encryptedSecret.inputProof
-    );
-    await secretTx.wait();
+    await updateSecret(cGUSDContract, signers.alice, secret);
 
     // execute private transfer from alice to receiver on index 1
-
     const from = [signers.alice.address, signers.bob.address, signers.clark.address].sort();
-    const to = [receivers[0].address, receivers[1].address, receivers[2].address].sort();
-
+    const to = receivers.map((r) => r.address).sort();
     const clearTransferAmount = 250;
     const clearReceiverChanges = [0, clearTransferAmount, 0];
-
-    const encryptedTransferAmounts = await fhevm
-      .createEncryptedInput(cGUSDContractAddress, signers.alice.address) // need to pass alice or deployer as signer?
-      .add128(clearTransferAmount)
-      .add128(clearReceiverChanges[0])
-      .add128(clearReceiverChanges[1])
-      .add128(clearReceiverChanges[2])
-      .encrypt();
-
-    const encAmountHandle = encryptedTransferAmounts.handles[0];
-    const encReceiverChanges = [encryptedTransferAmounts.handles[1], encryptedTransferAmounts.handles[3], encryptedTransferAmounts.handles[2]];
-
-    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-    const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [from, to, encAmountHandle, encReceiverChanges]);
-    const inputHash = ethers.keccak256(encodedInput);
-    const commitment = BigInt(secret) ^ BigInt(inputHash);
-
-    const encryptedTransferCommitment = await fhevm
-      .createEncryptedInput(cGUSDContractAddress, signers.alice.address) // need to pass alice or deployer as signer?
-      .add256(commitment)
-      .encrypt();
-
-    const privateTransferTx = await cGUSDContract.connect(signers.alice).privateTransfer(
-        from,
-        to,
-        encAmountHandle,
-        encReceiverChanges,
-        encryptedTransferAmounts.inputProof,
-        encryptedTransferCommitment.handles[0],
-        encryptedTransferCommitment.inputProof,
-    );
-    await privateTransferTx.wait();
+    await privateTransfer(cGUSDContract, relayer, secret, from, to, clearTransferAmount, clearReceiverChanges);
 
     // check final state
-
-    const encryptedAliceBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
-    const clearAliceBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedAliceBalance,
-      cGUSDContractAddress,
-      signers.alice,
-    );
-    expect(clearAliceBalance).to.eq(initialSupply - clearTransferAmount);
-
-    const encryptedBobBalance = await cGUSDContract.confidentialBalanceOf(signers.bob.address);
-    const clearBobBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedBobBalance,
-      cGUSDContractAddress,
-      signers.bob,
-    );
-    expect(clearBobBalance).to.eq(initialSupply);
-
-    const encryptedClarkBalance = await cGUSDContract.confidentialBalanceOf(signers.clark.address);
-    const clearClarkBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedClarkBalance,
-      cGUSDContractAddress,
-      signers.clark,
-    );
-    expect(clearClarkBalance).to.eq(initialSupply);
-
-    let encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[0].address);
-    let clearReceiverBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedReceiverBalance,
-      cGUSDContractAddress,
-      receivers[0],
-    );
-    expect(clearReceiverBalance).to.eq(0);
-
-    encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[1].address);
-    clearReceiverBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedReceiverBalance,
-      cGUSDContractAddress,
-      receivers[1],
-    );
-    expect(clearReceiverBalance).to.eq(clearTransferAmount);
-
-    encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[2].address);
-    clearReceiverBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedReceiverBalance,
-      cGUSDContractAddress,
-      receivers[2],
-    );
-    expect(clearReceiverBalance).to.eq(0);
+    expect(await fetchClearBalance(cGUSDContract, signers.alice)).to.eq(initialSupply - clearTransferAmount);
+    expect(await fetchClearBalance(cGUSDContract, signers.bob)).to.eq(initialSupply);
+    expect(await fetchClearBalance(cGUSDContract, signers.clark)).to.eq(initialSupply);
+    expect(await fetchClearBalance(cGUSDContract, receivers[0])).to.eq(0);
+    expect(await fetchClearBalance(cGUSDContract, receivers[1])).to.eq(clearTransferAmount);
+    expect(await fetchClearBalance(cGUSDContract, receivers[2])).to.eq(0);
   });
 });

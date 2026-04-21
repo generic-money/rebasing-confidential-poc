@@ -373,9 +373,9 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
             (ebool changeValid, euint128 newBalance) = FHESafeMath.tryDecrease(fromBalance, amount);
             allSenderChangesValid = FHE.and(allSenderChangesValid, changeValid);
 
+            _balances[_from] = newBalance;
             FHE.allowThis(newBalance);
             FHE.allow(newBalance, _from);
-            _balances[_from] = newBalance;
         }
 
         // Increase receivers balance
@@ -385,9 +385,9 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
             euint128 amount = FHE.select(FHE.and(inputsValid, allSenderChangesValid), receiverChanges[i], FHE.asEuint128(0));
             euint128 newBalance = FHE.add(_balances[_to], amount);
 
+            _balances[_to] = newBalance;
             FHE.allowThis(newBalance);
             FHE.allow(newBalance, _to);
-            _balances[_to] = newBalance;
         }
 
         // todo: emit event
