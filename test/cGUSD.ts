@@ -34,10 +34,13 @@ describe("cGUSD", function () {
   let cGUSDContract: CGUSD;
   let cGUSDContractAddress: string;
   let initialSupply: number = 1000;
+  let receivers: HardhatEthersSigner[];
 
   before(async function () {
     const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
     signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], clark: ethSigners[3] };
+
+    receivers = [ethSigners[4], ethSigners[5], ethSigners[6]];
   });
 
   beforeEach(async function () {
@@ -53,6 +56,14 @@ describe("cGUSD", function () {
     await mockERC20Contract.mint(signers.alice.address, initialSupply);
     await mockERC20Contract.connect(signers.alice).approve(cGUSDContractAddress, initialSupply);
     await cGUSDContract.connect(signers.alice).wrap(initialSupply);
+
+    await mockERC20Contract.mint(signers.bob.address, initialSupply);
+    await mockERC20Contract.connect(signers.bob).approve(cGUSDContractAddress, initialSupply);
+    await cGUSDContract.connect(signers.bob).wrap(initialSupply);
+
+    await mockERC20Contract.mint(signers.clark.address, initialSupply);
+    await mockERC20Contract.connect(signers.clark).approve(cGUSDContractAddress, initialSupply);
+    await cGUSDContract.connect(signers.clark).wrap(initialSupply);
   });
 
   it("fetch current balance of owner", async function() {
@@ -99,7 +110,7 @@ describe("cGUSD", function () {
       cGUSDContractAddress,
       signers.bob,
     );
-    expect(clearBobBalance).to.eq(clearTransferAmount);
+    expect(clearBobBalance).to.eq(initialSupply + clearTransferAmount);
   });
 
   it("reveal encrypted balance to another user", async function() {
@@ -155,74 +166,61 @@ describe("cGUSD", function () {
     expect(clearDecryptedBalanceByClark).to.eq(clearTransferAmount);
   });
 
-  it("update user balance on multiplier increase", async function() {
-    // increase supply to 150%
-    await mockERC20Contract.mint(cGUSDContractAddress, initialSupply / 2);
+  it("execute private transfer", async function() {
+    // set secret
+    const secret = BigInt(1);
+    const encryptedSecret = await fhevm
+        .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
+        .add256(secret)
+        .encrypt();
 
-    await cGUSDContract.syncMultiplier();
-    await cGUSDContract.syncUserBalance(signers.alice.address);
-
-    const encryptedBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
-    const clearBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedBalance,
-      cGUSDContractAddress,
-      signers.alice,
+    const secretTx = await cGUSDContract.connect(signers.alice).updateSecret(
+        encryptedSecret.handles[0],
+        encryptedSecret.inputProof
     );
+    await secretTx.wait();
 
-    expect(clearBalance).to.eq((initialSupply * 3) / 2);
+    // execute private transfer from alice to receiver on index 1
 
-    const multiplier = await cGUSDContract.multiplier();
-    expect(multiplier).to.eq(1500000000000000000n); // 1.5
-  });
+    const from = [signers.alice.address, signers.bob.address, signers.clark.address].sort();
+    const to = [receivers[0].address, receivers[1].address, receivers[2].address].sort();
 
-  it("update user balance on multiplier decrease", async function() {
-    // increase supply to 150%
-    await mockERC20Contract.burn(cGUSDContractAddress, initialSupply / 2);
+    const clearTransferAmount = 250;
+    const clearReceiverChanges = [0, clearTransferAmount, 0];
 
-    await cGUSDContract.syncMultiplier();
-    await cGUSDContract.syncUserBalance(signers.alice.address);
-
-    const encryptedBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
-    const clearBalance = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      encryptedBalance,
-      cGUSDContractAddress,
-      signers.alice,
-    );
-
-    expect(clearBalance).to.eq(initialSupply / 2);
-
-    const multiplier = await cGUSDContract.multiplier();
-    expect(multiplier).to.eq(500000000000000000n); // 0.5
-  });
-
-  it("update user balance on multiplier increase on transfer", async function() {
-    // increase supply to 150%
-    await mockERC20Contract.mint(cGUSDContractAddress, initialSupply / 2);
-
-    await cGUSDContract.syncMultiplier();
-    let isAliceUpdated = await cGUSDContract.isUpToDate(signers.alice.address);
-    expect(isAliceUpdated).to.eq(false);
-
-    // do not sync user balance, test that the balance is updated on transfer with the new multiplier
-    const clearTransferAmount = (initialSupply * 3) / 2; // transfer the entire balance after multiplier increase to trigger balance update
-    const encryptedTransferAmount = await fhevm
-      .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
+    const encryptedTransferAmounts = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, signers.alice.address) // need to pass alice or deployer as signer?
       .add128(clearTransferAmount)
+      .add128(clearReceiverChanges[0])
+      .add128(clearReceiverChanges[1])
+      .add128(clearReceiverChanges[2])
       .encrypt();
 
-    const tx = await cGUSDContract
-      .connect(signers.alice)
-      ["confidentialTransfer(address,bytes32,bytes)"](
-        signers.bob.address,
-        encryptedTransferAmount.handles[0],
-        encryptedTransferAmount.inputProof,
-      );
-    await tx.wait();
+    const encAmountHandle = encryptedTransferAmounts.handles[0];
+    const encReceiverChanges = [encryptedTransferAmounts.handles[1], encryptedTransferAmounts.handles[3], encryptedTransferAmounts.handles[2]];
 
-    isAliceUpdated = await cGUSDContract.isUpToDate(signers.alice.address);
-    expect(isAliceUpdated).to.eq(true);
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [from, to, encAmountHandle, encReceiverChanges]);
+    const inputHash = ethers.keccak256(encodedInput);
+    const commitment = BigInt(secret) ^ BigInt(inputHash);
+
+    const encryptedTransferCommitment = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, signers.alice.address) // need to pass alice or deployer as signer?
+      .add256(commitment)
+      .encrypt();
+
+    const privateTransferTx = await cGUSDContract.connect(signers.alice).privateTransfer(
+        from,
+        to,
+        encAmountHandle,
+        encReceiverChanges,
+        encryptedTransferAmounts.inputProof,
+        encryptedTransferCommitment.handles[0],
+        encryptedTransferCommitment.inputProof,
+    );
+    await privateTransferTx.wait();
+
+    // check final state
 
     const encryptedAliceBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
     const clearAliceBalance = await fhevm.userDecryptEuint(
@@ -231,10 +229,7 @@ describe("cGUSD", function () {
       cGUSDContractAddress,
       signers.alice,
     );
-    expect(clearAliceBalance).to.eq(0);
-
-    const isBobUpdated = await cGUSDContract.isUpToDate(signers.bob.address);
-    expect(isBobUpdated).to.eq(true);
+    expect(clearAliceBalance).to.eq(initialSupply - clearTransferAmount);
 
     const encryptedBobBalance = await cGUSDContract.confidentialBalanceOf(signers.bob.address);
     const clearBobBalance = await fhevm.userDecryptEuint(
@@ -243,57 +238,42 @@ describe("cGUSD", function () {
       cGUSDContractAddress,
       signers.bob,
     );
-    expect(clearBobBalance).to.eq(clearTransferAmount);
-  });
+    expect(clearBobBalance).to.eq(initialSupply);
 
-  it("test sync multiplier during unwrapping", async function() {
-    const originalMultiplier = await cGUSDContract.multiplier();
-    expect(originalMultiplier).to.eq(1000000000000000000n); // 1.0
-
-    const unwrappingAmount = initialSupply / 2;
-    const tx = await cGUSDContract.connect(signers.alice).unwrap(unwrappingAmount);
-    const receipt = await tx.wait();
-    const log = receipt!.logs.find((log) => log.eventName === "UnwrapRequested");
-    const requestId = log.args[0];
-    const unwrappingEncryptedAmount = log.args[2];
-
-    await cGUSDContract.syncMultiplier();
-    let multiplier = await cGUSDContract.multiplier();
-    expect(multiplier).to.eq(originalMultiplier); // 1.0, should not change
-
-    let unitAliceBalance = await mockERC20Contract.balanceOf(signers.alice.address);
-    expect(unitAliceBalance).to.eq(0); // balance should not be transferred before claim
-
-    let encryptedAliceBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
-    let clearAliceBalance = await fhevm.userDecryptEuint(
+    const encryptedClarkBalance = await cGUSDContract.confidentialBalanceOf(signers.clark.address);
+    const clearClarkBalance = await fhevm.userDecryptEuint(
       FhevmType.euint128,
-      encryptedAliceBalance,
+      encryptedClarkBalance,
       cGUSDContractAddress,
-      signers.alice,
+      signers.clark,
     );
-    expect(clearAliceBalance).to.eq(initialSupply - unwrappingAmount); // confidential balance should be burned immediately
+    expect(clearClarkBalance).to.eq(initialSupply);
 
-    // finish unwrapping by claiming the unwrapped units with the decryption proof of the unwrapping amount
-
-    const clearUnwrappingResult = await fhevm.publicDecrypt([unwrappingEncryptedAmount]);
-    await cGUSDContract.claimUnwrappedUnits(requestId, unwrappingAmount, clearUnwrappingResult.decryptionProof);
-
-    // unwrapping finished
-
-    await cGUSDContract.syncMultiplier();
-    multiplier = await cGUSDContract.multiplier();
-    expect(multiplier).to.eq(originalMultiplier); // 1.0, should not change
-
-    unitAliceBalance = await mockERC20Contract.balanceOf(signers.alice.address);
-    expect(unitAliceBalance).to.eq(unwrappingAmount); // balance should be transferred after claim
-
-    encryptedAliceBalance = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
-    clearAliceBalance = await fhevm.userDecryptEuint(
+    let encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[0].address);
+    let clearReceiverBalance = await fhevm.userDecryptEuint(
       FhevmType.euint128,
-      encryptedAliceBalance,
+      encryptedReceiverBalance,
       cGUSDContractAddress,
-      signers.alice,
+      receivers[0],
     );
-    expect(clearAliceBalance).to.eq(initialSupply - unwrappingAmount); // confidential balance should be the same as before claim
+    expect(clearReceiverBalance).to.eq(0);
+
+    encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[1].address);
+    clearReceiverBalance = await fhevm.userDecryptEuint(
+      FhevmType.euint128,
+      encryptedReceiverBalance,
+      cGUSDContractAddress,
+      receivers[1],
+    );
+    expect(clearReceiverBalance).to.eq(clearTransferAmount);
+
+    encryptedReceiverBalance = await cGUSDContract.confidentialBalanceOf(receivers[2].address);
+    clearReceiverBalance = await fhevm.userDecryptEuint(
+      FhevmType.euint128,
+      encryptedReceiverBalance,
+      cGUSDContractAddress,
+      receivers[2],
+    );
+    expect(clearReceiverBalance).to.eq(0);
   });
 });

@@ -302,8 +302,9 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         address[] memory to,
         externalEuint128 encryptedSenderChange,
         externalEuint128[] calldata encryptedReceiverChanges,
+        bytes calldata inputProof,
         externalEuint256 encryptedSenderCommitment,
-        bytes calldata inputProof
+        bytes calldata commitmentProof
     ) external {
         // Array input checks
         uint256 totalSenderChanges = from.length;
@@ -317,7 +318,7 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
 
         // Validate inputs
         euint128 senderChange = FHE.fromExternal(encryptedSenderChange, inputProof);
-        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, inputProof);
+        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
 
         ebool senderFound = FHE.asEbool(false);
         euint128[] memory senderChanges = new euint128[](totalSenderChanges);
