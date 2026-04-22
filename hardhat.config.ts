@@ -2,12 +2,16 @@ import "@fhevm/hardhat-plugin";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-verify";
+import "@nomicfoundation/hardhat-ignition-ethers";
+import "@nomicfoundation/hardhat-ledger";
 import "@typechain/hardhat";
 import "hardhat-deploy";
 import "hardhat-gas-reporter";
 import type { HardhatUserConfig } from "hardhat/config";
 import { vars } from "hardhat/config";
 import "solidity-coverage";
+
+import "./tasks/cGUSD";
 
 // Run 'npx hardhat vars setup' to see the list of variables that need to be set
 
@@ -18,10 +22,13 @@ const config: HardhatUserConfig = {
   namedAccounts: {
     deployer: 0,
   },
-  etherscan: {
-    apiKey: {
-      sepolia: vars.get("ETHERSCAN_API_KEY", ""),
-    },
+//   etherscan: {
+//     apiKey: {
+//       sepolia: vars.get("ETHERSCAN_API_KEY", ""),
+//     },
+//   },
+  sourcify: {
+    enabled: true
   },
   gasReporter: {
     currency: "USD",
