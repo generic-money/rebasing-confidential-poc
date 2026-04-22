@@ -62,7 +62,7 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
     }
 
     function decimals() public view virtual returns (uint8) {
-        return 18;
+        return 6;
     }
 
     function confidentialTotalSupply() public view virtual returns (euint128) {
