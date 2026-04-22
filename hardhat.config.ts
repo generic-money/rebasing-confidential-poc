@@ -52,11 +52,9 @@ const config: HardhatUserConfig = {
       url: "http://localhost:8545",
     },
     sepolia: {
-      accounts: {
-        mnemonic: MNEMONIC,
-        path: "m/44'/60'/0'/0/",
-        count: 10,
-      },
+      ledgerAccounts: [
+        "0x817a4ABDbE866e8dcc0f6AeeFfe06c3219eE8eb7"
+      ],
       chainId: 11155111,
       url: "https://ethereum-sepolia-rpc.publicnode.com",
     },
