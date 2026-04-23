@@ -15,18 +15,26 @@ import "./tasks/cGUSD";
 
 // Run 'npx hardhat vars setup' to see the list of variables that need to be set
 
-const MNEMONIC: string = vars.get("MNEMONIC", "test test test test test test test test test test test junk");
-
 const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
   namedAccounts: {
     deployer: 0,
   },
-//   etherscan: {
-//     apiKey: {
-//       sepolia: vars.get("ETHERSCAN_API_KEY", ""),
-//     },
-//   },
+  etherscan: {
+    apiKey: {
+      sepolia: vars.get("API_KEY_ETHERSCAN"),
+    },
+    customChains: [
+        {
+            network: "sepolia",
+            chainId: 11155111,
+            urls: {
+                apiURL: "https://api.etherscan.io/v2/api?chainid=11155111",
+                browserURL: "https://sepolia.etherscan.io/"
+            }
+        }
+    ]
+  },
   sourcify: {
     enabled: true
   },
@@ -38,13 +46,13 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       accounts: {
-        mnemonic: MNEMONIC,
+        mnemonic: vars.get("MNEMONIC"),
       },
       chainId: 31337,
     },
     anvil: {
       accounts: {
-        mnemonic: MNEMONIC,
+        mnemonic: vars.get("MNEMONIC"),
         path: "m/44'/60'/0'/0/",
         count: 10,
       },
@@ -52,9 +60,10 @@ const config: HardhatUserConfig = {
       url: "http://localhost:8545",
     },
     sepolia: {
-      ledgerAccounts: [
-        "0x817a4ABDbE866e8dcc0f6AeeFfe06c3219eE8eb7"
-      ],
+      accounts: {
+        mnemonic: vars.get("MNEMONIC"),
+        count: 30,
+      },
       chainId: 11155111,
       url: "https://ethereum-sepolia-rpc.publicnode.com",
     },
