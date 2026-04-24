@@ -88,8 +88,7 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
         encryptedTransferCommitment.handles[0],
         encryptedTransferCommitment.inputProof,
     );
-    const receipt = await privateTransferTx.wait();
-    console.log(receipt?.gasUsed);
+    return await privateTransferTx.wait();
 }
 
 describe("cGUSD", function () {
@@ -234,7 +233,8 @@ describe("cGUSD", function () {
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearTransferAmount = 250;
     const clearBalanceChanges = [0, clearTransferAmount, 0, 100, 150, 0];
-    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+    const receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+    console.log(receipt?.gasUsed);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "0");
