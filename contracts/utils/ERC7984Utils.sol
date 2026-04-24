@@ -20,13 +20,10 @@ library ERC7984Utils {
      * whether the transfer was accepted or not. If the `ebool` is `false`, the transfer function
      * should try to refund the `from` address.
      */
-    function checkOnTransferReceived(
-        address operator,
-        address from,
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) internal returns (ebool) {
+    function checkOnTransferReceived(address operator, address from, address to, euint64 amount, bytes calldata data)
+        internal
+        returns (ebool)
+    {
         if (to.code.length > 0) {
             try IERC7984Receiver(to).onConfidentialTransferReceived(operator, from, amount, data) returns (
                 ebool retval

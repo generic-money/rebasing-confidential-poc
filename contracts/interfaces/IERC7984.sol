@@ -57,11 +57,9 @@ interface IERC7984 is IERC165 {
      *
      * Returns the encrypted amount that was actually transferred.
      */
-    function confidentialTransfer(
-        address to,
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof
-    ) external returns (euint64);
+    function confidentialTransfer(address to, externalEuint64 encryptedAmount, bytes calldata inputProof)
+        external
+        returns (euint64);
 
     /**
      * @dev Similar to {confidentialTransfer-address-externalEuint64-bytes} but without an input proof. The caller
@@ -104,11 +102,9 @@ interface IERC7984 is IERC165 {
     ) external returns (euint64 transferred);
 
     /// @dev Similar to {confidentialTransfer-address-euint64} but with a callback to `to` after the transfer.
-    function confidentialTransferAndCall(
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) external returns (euint64 transferred);
+    function confidentialTransferAndCall(address to, euint64 amount, bytes calldata data)
+        external
+        returns (euint64 transferred);
 
     /**
      * @dev Similar to {confidentialTransferFrom-address-address-externalEuint64-bytes} but with a callback to `to`
@@ -127,10 +123,7 @@ interface IERC7984 is IERC165 {
      * after the transfer.
      *
      */
-    function confidentialTransferFromAndCall(
-        address from,
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) external returns (euint64 transferred);
+    function confidentialTransferFromAndCall(address from, address to, euint64 amount, bytes calldata data)
+        external
+        returns (euint64 transferred);
 }

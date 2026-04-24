@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 pragma solidity ^0.8.24;
 
-import {FHE, externalEuint256, externalEuint64, externalEuint8, euint256, euint64, euint8, ebool} from "@fhevm/solidity/lib/FHE.sol";
+import {
+    FHE,
+    externalEuint256,
+    externalEuint64,
+    externalEuint8,
+    euint256,
+    euint64,
+    euint8,
+    ebool
+} from "@fhevm/solidity/lib/FHE.sol";
+import {Impl} from "@fhevm/solidity/lib/Impl.sol";
 
 import {cERC20, IERC20} from "./cERC20.sol";
 
@@ -12,12 +22,9 @@ contract cGUSD is cERC20 {
 
     mapping(address => euint256) internal _privateSecret;
 
-    constructor(
-        IERC20 unitToken_,
-        string memory name_,
-        string memory symbol_,
-        string memory contractURI_
-    ) cERC20(unitToken_, name_, symbol_, contractURI_) { }
+    constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_)
+        cERC20(unitToken_, name_, symbol_, contractURI_)
+    {}
 
     function updateSecret(externalEuint256 encryptedNewSecret, bytes calldata inputProof) external {
         euint256 newSecret = FHE.fromExternal(encryptedNewSecret, inputProof);

@@ -42,12 +42,7 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
     error ERC7984ZeroBalance(address holder);
     error ERC7984UnauthorizedUseOfEncryptedAmount(euint64 amount, address user);
 
-    constructor(
-        IERC20 unitToken_,
-        string memory name_,
-        string memory symbol_,
-        string memory contractURI_
-    ) {
+    constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_) {
         unitToken = unitToken_;
         name = name_;
         symbol = symbol_;
@@ -79,11 +74,11 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         _setOperator(msg.sender, operator, until);
     }
 
-    function confidentialTransfer(
-        address to,
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof
-    ) public virtual returns (euint64) {
+    function confidentialTransfer(address to, externalEuint64 encryptedAmount, bytes calldata inputProof)
+        public
+        virtual
+        returns (euint64)
+    {
         return _transfer(msg.sender, to, FHE.fromExternal(encryptedAmount, inputProof));
     }
 
@@ -103,11 +98,11 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         FHE.allowTransient(transferred, msg.sender);
     }
 
-    function confidentialTransferFrom(
-        address from,
-        address to,
-        euint64 amount
-    ) public virtual returns (euint64 transferred) {
+    function confidentialTransferFrom(address from, address to, euint64 amount)
+        public
+        virtual
+        returns (euint64 transferred)
+    {
         require(FHE.isAllowed(amount, msg.sender), ERC7984UnauthorizedUseOfEncryptedAmount(amount, msg.sender));
         require(isOperator(from, msg.sender), ERC7984UnauthorizedSpender(from, msg.sender));
         transferred = _transfer(from, to, amount);
@@ -124,11 +119,11 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         FHE.allowTransient(transferred, msg.sender);
     }
 
-    function confidentialTransferAndCall(
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) public virtual returns (euint64 transferred) {
+    function confidentialTransferAndCall(address to, euint64 amount, bytes calldata data)
+        public
+        virtual
+        returns (euint64 transferred)
+    {
         require(FHE.isAllowed(amount, msg.sender), ERC7984UnauthorizedUseOfEncryptedAmount(amount, msg.sender));
         transferred = _transferAndCall(msg.sender, to, amount, data);
         FHE.allowTransient(transferred, msg.sender);
@@ -146,12 +141,11 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         FHE.allowTransient(transferred, msg.sender);
     }
 
-    function confidentialTransferFromAndCall(
-        address from,
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) public virtual returns (euint64 transferred) {
+    function confidentialTransferFromAndCall(address from, address to, euint64 amount, bytes calldata data)
+        public
+        virtual
+        returns (euint64 transferred)
+    {
         require(FHE.isAllowed(amount, msg.sender), ERC7984UnauthorizedUseOfEncryptedAmount(amount, msg.sender));
         require(isOperator(from, msg.sender), ERC7984UnauthorizedSpender(from, msg.sender));
         transferred = _transferAndCall(from, to, amount, data);
@@ -180,11 +174,10 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
      *
      * NOTE: May not be tied to a prior request via {requestDiscloseEncryptedAmount}.
      */
-    function discloseEncryptedAmount(
-        euint64 encryptedAmount,
-        uint64 cleartextAmount,
-        bytes calldata decryptionProof
-    ) public virtual {
+    function discloseEncryptedAmount(euint64 encryptedAmount, uint64 cleartextAmount, bytes calldata decryptionProof)
+        public
+        virtual
+    {
         bytes32[] memory handles = new bytes32[](1);
         handles[0] = euint64.unwrap(encryptedAmount);
 
@@ -209,10 +202,7 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         // but will be restored after claimUnwrappedUnits is called
         euint64 burned = _update(msg.sender, address(0), FHE.asEuint64(amount));
         requestId = ++lastRequestId;
-        _unwrapRequests[requestId] = UnwrapRequest({
-            owner: msg.sender,
-            encryptedAmount: burned
-        });
+        _unwrapRequests[requestId] = UnwrapRequest({owner: msg.sender, encryptedAmount: burned});
         requestDiscloseEncryptedAmount(burned); // needed to decide if user has sufficient balance
         emit UnwrapRequested(requestId, msg.sender, burned);
     }
@@ -246,12 +236,10 @@ contract cERC20 is ZamaEthereumConfig, ERC165, IERC7984 {
         return _update(from, to, amount);
     }
 
-    function _transferAndCall(
-        address from,
-        address to,
-        euint64 amount,
-        bytes calldata data
-    ) internal returns (euint64 transferred) {
+    function _transferAndCall(address from, address to, euint64 amount, bytes calldata data)
+        internal
+        returns (euint64 transferred)
+    {
         // Try to transfer amount + replace input with actually transferred amount.
         euint64 sent = _transfer(from, to, amount);
 
