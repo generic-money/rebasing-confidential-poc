@@ -55,39 +55,41 @@ async function updateSecret(cGUSDContract: CGUSD, signer: HardhatEthersSigner, s
     await secretTx.wait();
 }
 
-async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, from: string[], to: string[], clearTransferAmount: number, clearReceiverChanges: number[]) {
+async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, anons: string[], clearBalanceChanges: number[], clearSenderIndex: number) {
     const cGUSDContractAddress = await cGUSDContract.getAddress();
-    const encryptedTransferAmounts = await fhevm
-      .createEncryptedInput(cGUSDContractAddress, relayer.address)
-      .add64(clearTransferAmount)
-      .add64(clearReceiverChanges[0])
-      .add64(clearReceiverChanges[1])
-      .add64(clearReceiverChanges[2])
-      .encrypt();
 
-    const encAmountHandle = encryptedTransferAmounts.handles[0];
-    const encReceiverChanges = [encryptedTransferAmounts.handles[1], encryptedTransferAmounts.handles[3], encryptedTransferAmounts.handles[2]];
+    // Transfer inputs
+    let transferInputs = fhevm
+        .createEncryptedInput(cGUSDContractAddress, relayer.address)
+        .add8(clearSenderIndex)
+    for (const change of clearBalanceChanges) {
+      transferInputs.add64(change)
+    }
+    const encryptedTransferInputs = await transferInputs.encrypt();
+    const encryptedSenderIndex = encryptedTransferInputs.handles[0];
+    const encryptedBalanceChanges = encryptedTransferInputs.handles.slice(1);
 
+    // Input commitment
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-    const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [from, to, encAmountHandle, encReceiverChanges]);
+    const encodedInput = abiCoder.encode(["address[]", "bytes32[]", "bytes32"], [anons, encryptedBalanceChanges, encryptedSenderIndex]);
     const inputHash = ethers.keccak256(encodedInput);
     const commitment = BigInt(secret) ^ BigInt(inputHash);
-
     const encryptedTransferCommitment = await fhevm
       .createEncryptedInput(cGUSDContractAddress, relayer.address)
       .add256(commitment)
       .encrypt();
 
+    // Execute transfer
     const privateTransferTx = await cGUSDContract.connect(relayer).anonymousTransfer(
-        from,
-        to,
-        encAmountHandle,
-        encReceiverChanges,
-        encryptedTransferAmounts.inputProof,
+        anons,
+        encryptedBalanceChanges,
+        encryptedSenderIndex,
+        encryptedTransferInputs.inputProof,
         encryptedTransferCommitment.handles[0],
         encryptedTransferCommitment.inputProof,
     );
-    await privateTransferTx.wait();
+    const receipt = await privateTransferTx.wait();
+    console.log(receipt?.gasUsed);
 }
 
 describe("cGUSD", function () {
@@ -100,12 +102,12 @@ describe("cGUSD", function () {
   let receivers: HardhatEthersSigner[];
   let relayer: HardhatEthersSigner;
 
-//   const secret = BigInt(1);
+  const secret = 1n;
 
   before(async function () {
     const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
     signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], clark: ethSigners[3] };
-    receivers = [ethSigners[4], ethSigners[5], ethSigners[6]];
+    receivers = ethSigners.slice(0,6);
     relayer = ethSigners[7];
   });
 
@@ -119,20 +121,12 @@ describe("cGUSD", function () {
     ({ mockERC20Contract, mockERC20ContractAddress } = await deployMockUnitToken());
     ({ cGUSDContract, cGUSDContractAddress } = await deployCGUSD(mockERC20ContractAddress));
 
-    await mockERC20Contract.mint(signers.alice.address, initialSupply);
-    await mockERC20Contract.connect(signers.alice).approve(cGUSDContractAddress, initialSupply);
-    await cGUSDContract.connect(signers.alice).wrap(initialSupply);
-    await updateSecret(cGUSDContract, signers.alice, 1n);
-
-    await mockERC20Contract.mint(signers.bob.address, initialSupply);
-    await mockERC20Contract.connect(signers.bob).approve(cGUSDContractAddress, initialSupply);
-    await cGUSDContract.connect(signers.bob).wrap(initialSupply);
-    await updateSecret(cGUSDContract, signers.bob, 2n);
-
-    await mockERC20Contract.mint(signers.clark.address, initialSupply);
-    await mockERC20Contract.connect(signers.clark).approve(cGUSDContractAddress, initialSupply);
-    await cGUSDContract.connect(signers.clark).wrap(initialSupply);
-    await updateSecret(cGUSDContract, signers.clark, 3n);
+    for (const receiver of receivers) {
+        await mockERC20Contract.mint(receiver.address, initialSupply);
+        await mockERC20Contract.connect(receiver).approve(cGUSDContractAddress, initialSupply);
+        await cGUSDContract.connect(receiver).wrap(initialSupply);
+        await updateSecret(cGUSDContract, receiver, secret);
+    }
   });
 
   it("fetch current balance of owner", async function() {
@@ -237,18 +231,17 @@ describe("cGUSD", function () {
 
   it("execute anonymous transfer", async function() {
     // execute anonymous transfer from alice to receiver on index 1
-    const from = [signers.alice.address, signers.bob.address, signers.clark.address].sort();
-    const to = receivers.map((r) => r.address).sort();
+    const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearTransferAmount = 250;
-    const clearReceiverChanges = [0, clearTransferAmount, 0];
-    await anonymousTransfer(cGUSDContract, relayer, 1n, from, to, clearTransferAmount, clearReceiverChanges);
+    const clearBalanceChanges = [0, clearTransferAmount, 0, 100, 150, 0];
+    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
 
     // check final state
-    expect(await fetchClearBalance(cGUSDContract, signers.alice)).to.eq(initialSupply - clearTransferAmount);
-    expect(await fetchClearBalance(cGUSDContract, signers.bob)).to.eq(initialSupply);
-    expect(await fetchClearBalance(cGUSDContract, signers.clark)).to.eq(initialSupply);
-    expect(await fetchClearBalance(cGUSDContract, receivers[0])).to.eq(0);
-    expect(await fetchClearBalance(cGUSDContract, receivers[1])).to.eq(0);
-    expect(await fetchClearBalance(cGUSDContract, receivers[2])).to.eq(clearTransferAmount);
+    expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "0");
+    expect(await fetchClearBalance(cGUSDContract, anons[1])).to.eq(initialSupply - clearTransferAmount, "1");
+    expect(await fetchClearBalance(cGUSDContract, anons[2])).to.eq(initialSupply, "2");
+    expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "3");
+    expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "4");
+    expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "5");
   });
 });

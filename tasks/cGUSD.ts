@@ -2,7 +2,7 @@ import { task } from "hardhat/config";
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import type { TaskArguments } from "hardhat/types";
 
-const cGUSDAddress = "0xa335D08543A60745b1FA6b1220Df15E37538C795"; // latest cGUSD Sepolia deployment
+const cGUSDAddress = "0xE98Fd322C8dEd61Fd7b4550Bba6f13f44e0A6601"; // latest cGUSD Sepolia deployment
 const mock20Address = "0x2456ca90f5C89a07051De8645DC16109C615B0F5";
 
 function compareAddrs(a: string, b: string) {
@@ -93,6 +93,29 @@ task("m:mint", "Mint Mock20 tokens")
         console.log(`${signers[index].address} minting ${amount} MockERC20 succeeded!`);
     });
 
+task("m:mint:all", "Mint Mock20 tokens to the first 30 test signers")
+task("m:approve:all", "Approve cGUSD to the first 30 test signers")
+    .addParam("amount", "Amount to approve")
+    .setAction(async function (taskArguments: TaskArguments, hre) {
+        const { ethers } = hre;
+
+        const amount = parseInt(taskArguments.amount);
+        if (!Number.isInteger(amount)) {
+            throw new Error(`Argument --amount is not an integer`);
+        }
+
+        const mock20 = await ethers.getContractAt("MockERC20", mock20Address);
+        const signers = await ethers.getSigners();
+
+        for (let i = 0; i < 30; i++) {
+            // Mint mock unit tokens
+            const tx = await mock20.connect(signers[i]).approve(cGUSDAddress, amount);
+            console.log(`Wait for tx: ${tx.hash}`);
+
+            console.log(`[${i}] ${signers[i].address} approving ${amount} MockERC20`);
+        }
+    });
+
 task("c:wrap", "Wraps Mock20 tokens")
     .addParam("amount", "Amount to wrap")
     .addParam("signer", "Index of the test signer")
@@ -121,7 +144,7 @@ task("c:wrap", "Wraps Mock20 tokens")
         console.log(`Wrapping ${amount} cGUSD succeeded!`);
     });
 
-task("c:wrap:all", "Wraps Mock20 tokens")
+task("c:wrap:all", "Wraps Mock20 tokens of the first 30 test signers")
     .addParam("amount", "Amount to wrap")
     .setAction(async function (taskArguments: TaskArguments, hre) {
         const { ethers } = hre;
@@ -235,41 +258,42 @@ task("p:secret", "Set user secret")
     });
 
 /**
-npx hardhat --network sepolia p:transfer --r 0 --rc 1,0,0,0,0 --s 44 --senders 1,2,3,4,5 --receivers 1,2,3,4,5
+npx hardhat --network sepolia p:transfer --r 0 --bc 1,0,0,1 --s 44 --anon 1,2,3,4 --si 0
 */
 // 1-to-n transfer
 task("p:transfer", "Execute private transfer")
     .addParam("r", "Relayer index in the signers list")
-    .addParam("rc", "Receiver balance changes")
+    .addParam("anon", "Comma-separated list of anon indexes in the signers list")
+    .addParam("bc", "Balance changes")
+    .addParam("si", "Sender index")
     .addParam("s", "Sender secret")
-    .addParam("senders", "Comma-separated list of decoy indexes in the signers list")
-    .addParam("receivers", "Comma-separated list of decoy indexes in the signers list")
     .setAction(async function (taskArguments: TaskArguments, hre) {
         const { ethers } = hre;
 
         const relayerIndex = parseInt(taskArguments.r);
         const secret = parseInt(taskArguments.s);
-        const senderIndexes: number[] = taskArguments.senders.split(",").map(Number);
-        const receiverIndexes: number[] = taskArguments.receivers.split(",").map(Number);
-        const balanceChanges: number[] = taskArguments.rc.split(",").map(Number); // need to sort as receivers
+        const senderIndex = parseInt(taskArguments.si);
+        const anonIndexes: number[] = taskArguments.anon.split(",").map(Number);
+        const balanceChanges: number[] = taskArguments.bc.split(",").map(Number); // need to sort as receivers
 
         const signers = await ethers.getSigners();
         const relayer = signers[relayerIndex];
 
-        const senders = senderIndexes.map((i) => signers[i].address).sort(compareAddrs);
-        const receivers = receiverIndexes.map((rIndex, i) => ({
+        const anons = anonIndexes.map((rIndex, i) => ({
             address: signers[rIndex].address,
-            change: balanceChanges[i]
+            change: balanceChanges[i],
+            isSender: i == senderIndex,
         })).sort((a,b) => Number.parseInt(a.address) - Number.parseInt(b.address));
-        const receiversAddrs = receivers.map((r) => r.address);
-        const receiverChanges = receivers.map((r) => r.change);
+        const anonAddrsSorted = anons.map((a) => a.address);
+        const balanceChangesSorted = anons.map((a) => a.change);
+        const senderIndexSorted = anons.findIndex((a) => a.isSender);
 
         console.log("Inputs:");
         console.log("-------");
-        console.log("senders:")
-        console.log(senders);
-        console.log("receivers:");
-        console.log(receivers);
+        console.log("anons:");
+        console.log(anons);
+        console.log("sender index:");
+        console.log(senderIndexSorted);
 
         const cGUSD = await ethers.getContractAt("cGUSD", cGUSDAddress);
 
@@ -277,22 +301,22 @@ task("p:transfer", "Execute private transfer")
         await fhevm.initializeCLIApi();
 
         console.log("Encrypting balance changes...");
-        const encryptedTransferAmountsStart = Date.now();
+        const encryptedTransferInputsStart = Date.now();
         let input = fhevm
             .createEncryptedInput(cGUSDAddress, relayer.address)
-            .add64(amount);
-        for (const receiverChange of receiverChanges) {
-            input.add64(receiverChange);
+            .add8(senderIndexSorted);
+        for (const balanceChange of balanceChangesSorted) {
+            input.add64(balanceChange);
         }
-        const encryptedTransferAmounts = await input.encrypt();
-        const encryptedTransferAmountsDuration = Date.now() - encryptedTransferAmountsStart;
-        console.log(`Balance changes encrypted (${encryptedTransferAmountsDuration}ms)`);
+        const encryptedTransferInputs = await input.encrypt();
+        const encryptedTransferInputsDuration = Date.now() - encryptedTransferInputsStart;
+        console.log(`Transfer inputs encrypted (${encryptedTransferInputsDuration}ms)`);
 
-        const encAmountHandle = encryptedTransferAmounts.handles[0];
-        const encReceiverChanges = encryptedTransferAmounts.handles.slice(1);
+        const senderIndexHandle = encryptedTransferInputs.handles[0];
+        const balanceChangesHandles = encryptedTransferInputs.handles.slice(1);
 
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-        const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [senders, receiversAddrs, encAmountHandle, encReceiverChanges]);
+        const encodedInput = abiCoder.encode(["address[]", "bytes32[]", "bytes32"], [anonAddrsSorted, balanceChangesHandles, senderIndexHandle]);
         const inputHash = ethers.keccak256(encodedInput);
         const commitment = BigInt(secret) ^ BigInt(inputHash);
 
@@ -306,11 +330,10 @@ task("p:transfer", "Execute private transfer")
         console.log(`Transfer commitment encrypted (${encryptedTransferCommitmentDuration}ms)`);
 
         const tx = await cGUSD.connect(relayer).anonymousTransfer(
-            senders,
-            receiversAddrs,
-            encAmountHandle,
-            encReceiverChanges,
-            encryptedTransferAmounts.inputProof,
+            anonAddrsSorted,
+            balanceChangesHandles,
+            senderIndexHandle,
+            encryptedTransferInputs.inputProof,
             encryptedTransferCommitment.handles[0],
             encryptedTransferCommitment.inputProof,
         );

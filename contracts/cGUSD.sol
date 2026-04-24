@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 pragma solidity ^0.8.24;
 
-import {FHE, externalEuint256, externalEuint64, euint256, euint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, externalEuint256, externalEuint64, externalEuint8, euint256, euint64, euint8, ebool} from "@fhevm/solidity/lib/FHE.sol";
 
 import {FHESafeMath} from "./utils/FHESafeMath.sol";
 import {cERC20, IERC20} from "./cERC20.sol";
 
 contract cGUSD is cERC20 {
+    // Note: Current implementatino supports only one input ZKPoK that can fit 2048 bits of information.
+    // (2048 - 8 (sender index)) / 64 = 31
+    uint256 public constant MAX_ANONYMITY_SET = 31;
+
     mapping(address => euint256) internal _privateSecret;
 
     constructor(
@@ -16,115 +20,117 @@ contract cGUSD is cERC20 {
         string memory contractURI_
     ) cERC20(unitToken_, name_, symbol_, contractURI_) { }
 
-    // Anonymous transfer
-
-    /// @dev sender addresses must be initialized (i.e. non-zero balance, encrypted zero balance is allowed)
-    function anonymousTransfer(
-        address[] memory from,
-        address[] memory to,
-        externalEuint64 encryptedSenderChange,
-        externalEuint64[] calldata encryptedReceiverChanges,
-        bytes calldata inputProof,
-        externalEuint256 encryptedSenderCommitment,
-        bytes calldata commitmentProof
-    ) external {
-        // Array input checks
-        uint256 totalSenderChanges = from.length;
-        require(totalSenderChanges <= type(uint8).max, "Too many senders");
-        require(totalSenderChanges > 0, "At least one sender required");
-        uint256 totalReceiverChanges = to.length;
-        require(totalReceiverChanges == encryptedReceiverChanges.length, "Length mismatch");
-        require(totalReceiverChanges > 0, "At least one receiver required");
-
-        uint256 inputHash = uint256(keccak256(abi.encode(from, to, encryptedSenderChange, encryptedReceiverChanges)));
-
-        // Validate inputs
-        euint64 senderChange = FHE.fromExternal(encryptedSenderChange, inputProof);
-        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
-
-        ebool senderFound = FHE.asEbool(false);
-        euint64[] memory senderChanges = new euint64[](totalSenderChanges);
-        for (uint256 i; i < totalSenderChanges; ++i) {
-            address _from = from[i];
-            require(_from != address(0), ERC7984InvalidSender(address(0)));
-            if (i > 0) require(uint160(from[i - 1]) < uint160(_from), "Not sorted"); // enforce strictly increasing order to prevent duplicates
-
-            // Note: assuming every sender has a different secret
-            // If not, transfer amount is taken from all senders with the same secret
-            euint256 secret = _privateSecret[_from];
-            require(FHE.isInitialized(secret), "sender secret not initialized");
-            euint256 txSecret = FHE.xor(secret, inputHash);
-            ebool isSender = FHE.eq(senderCommitment, txSecret);
-            senderFound = FHE.or(senderFound, isSender);
-            senderChanges[i] = FHE.select(isSender, senderChange, FHE.asEuint64(0));
-        }
-
-        euint64[] memory receiverChanges = new euint64[](totalReceiverChanges);
-        euint64 sumReceiverChanges;
-        for (uint256 i; i < totalReceiverChanges; ++i) {
-            address _to = to[i];
-            require(_to != address(0), ERC7984InvalidReceiver(address(0)));
-            if (i > 0) require(uint160(to[i - 1]) < uint160(_to), "Not sorted"); // enforce strictly increasing order to prevent duplicates
-
-            receiverChanges[i] = FHE.fromExternal(encryptedReceiverChanges[i], inputProof);
-            sumReceiverChanges = FHE.add(sumReceiverChanges, receiverChanges[i]);
-        }
-
-        ebool amountsMatch = FHE.eq(senderChange, sumReceiverChanges);
-        ebool inputsValid = FHE.and(senderFound, amountsMatch);
-
-        // Inputs are valid when:
-        // - sender index is in range
-        // - sender change matches sum of receiver changes
-        // - sender secret is valid
-
-        // Following invariants hold implicitly:
-        // - sender changes is list of zeros with at most one non-zero value (i.e. only one sender)
-        // - receiver changes are non-negative
-
-        // At this point we have:
-        // - list of senders with their respective changes, where only one sender has non-zero change
-        // - list of receivers with their respective changes, where all changes are non-negative, and their sum matches the non-zero sender change
-
-        // Decrese senders balance
-        // Note: Only one sender has a non-zero change, so sender changes can be invalid only if the sender has insufficient balance.
-        // In that case zero is used as change amount, so balances won't be updated for any sender and no rollback is needed.
-        ebool allSenderChangesValid = FHE.asEbool(true);
-        for (uint256 i; i < totalSenderChanges; ++i) {
-            address _from = from[i];
-            euint64 fromBalance = _balances[_from];
-            euint64 amount = FHE.select(inputsValid, senderChanges[i], FHE.asEuint64(0));
-
-            require(FHE.isInitialized(fromBalance), ERC7984ZeroBalance(_from));
-            (ebool changeValid, euint64 newBalance) = FHESafeMath.tryDecrease(fromBalance, amount);
-            allSenderChangesValid = FHE.and(allSenderChangesValid, changeValid);
-
-            _balances[_from] = newBalance;
-            FHE.allowThis(newBalance);
-            FHE.allow(newBalance, _from);
-        }
-
-        // Increase receivers balance
-        for (uint256 i; i < totalReceiverChanges; ++i) {
-            address _to = to[i];
-            // Adjust balance change in case of invalid sender changes
-            euint64 amount = FHE.select(FHE.and(inputsValid, allSenderChangesValid), receiverChanges[i], FHE.asEuint64(0));
-            euint64 newBalance = FHE.add(_balances[_to], amount);
-
-            _balances[_to] = newBalance;
-            FHE.allowThis(newBalance);
-            FHE.allow(newBalance, _to);
-        }
-
-        // todo: emit event
-    }
-
     function updateSecret(externalEuint256 encryptedNewSecret, bytes calldata inputProof) external {
         euint256 newSecret = FHE.fromExternal(encryptedNewSecret, inputProof);
         _privateSecret[msg.sender] = newSecret;
         FHE.allowThis(newSecret);
         // users are prevented from fetching their secret
         // they should set a new one if they lost the old one instead
+
+        // todo: emit event
+    }
+
+    // Anonymous transfer
+
+    /// @dev sender balance must be initialized (i.e. non-zero balance, encrypted zero balance is allowed)
+    /// @dev the balance change on the sender index position is taken as negative
+    /// @dev assume only one sender
+    function anonymousTransfer(
+        address[] memory anonymitySet,
+        externalEuint64[] calldata encryptedBalanceChanges,
+        externalEuint8 encryptedSenderIndex,
+        bytes calldata inputProof,
+        externalEuint256 encryptedSenderCommitment,
+        bytes calldata commitmentProof
+    ) external {
+        // Array input checks
+        uint256 anonymitySetSize = anonymitySet.length;
+        require(anonymitySetSize > 0, "Empty anonymity set");
+        require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
+        require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
+
+        uint256 inputHash = uint256(keccak256(abi.encode(anonymitySet, encryptedBalanceChanges, encryptedSenderIndex)));
+
+        euint8 senderIndex = FHE.fromExternal(encryptedSenderIndex, inputProof);
+        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
+
+        // Validate inputs
+        euint64 sumBalanceChanges;
+        euint64 senderBalanceChange;
+        euint64[] memory balanceChanges = new euint64[](anonymitySetSize);
+        ebool validCommitment = FHE.asEbool(true);
+        // Note: Any FHE operation here is executed anonymitySetSize-times.
+        for (uint256 i; i < anonymitySetSize; ++i) {
+            address anon = anonymitySet[i];
+            require(anon != address(0), "Zero address in anonymity set");
+            if (i > 0) require(uint160(anonymitySet[i - 1]) < uint160(anon), "Not sorted"); // enforce strictly increasing order to prevent duplicates
+
+            balanceChanges[i] = FHE.fromExternal(encryptedBalanceChanges[i], inputProof);
+            sumBalanceChanges = FHE.add(sumBalanceChanges, balanceChanges[i]);
+            // todo: check for overflow
+
+            ebool isSender = FHE.eq(senderIndex, uint8(i));
+            senderBalanceChange = FHE.add(senderBalanceChange, FHE.select(isSender, balanceChanges[i], FHE.asEuint64(0)));
+
+            euint256 secret = _privateSecret[anon];
+            euint256 txCommitment = FHE.xor(secret, inputHash);
+            // Note: will not revert on uninitialized secret, but cannot use the address as sender
+            ebool commitmentMatch = FHE.and(FHE.eq(txCommitment, senderCommitment), FHE.isInitialized(secret));
+            validCommitment = FHE.and(validCommitment, FHE.select(isSender, commitmentMatch, FHE.asEbool(true)));
+        }
+
+        // Note: sum of receiver balance changes must be eq to the sender balance change
+        // ===> sum of all balance changes must be eq to 2x sender balance change (valid when all changes are zero)
+        // Saves one FHE `select` operation in the loop.
+        ebool validBalanceChanges = FHE.eq(sumBalanceChanges, FHE.add(senderBalanceChange, senderBalanceChange)); // `add` is cheaper than `mul`
+        ebool validSenderIndex = FHE.lt(senderIndex, uint8(anonymitySetSize));
+        ebool validInputs = FHE.and(validCommitment, FHE.and(validBalanceChanges, validSenderIndex));
+
+        // Inputs are valid when:
+        // - sender index is in range -> we have one sender, with balance change and secret
+        // - sender change matches sum of receiver changes
+        // - sender knows its own secret
+        // - inputs match the tx commitment with senders secret
+
+        // Following invariants hold implicitly:
+        // - only one negative balance change (only one sender index)
+        // - all changes are non-negative
+
+        // At this point we have:
+        // - list of addresses paired with balances changes, without duplicates
+        // - index of sender balance change
+
+        // Execute sender balance changes
+        // Note: Only one sender has a non-zero change, so sender changes can be invalid only if the sender has insufficient balance.
+        // In that case zero is used as change amount, so balances won't be updated for any sender and no rollback is needed.
+        ebool sufficientBalances = FHE.asEbool(true);
+        for (uint256 i; i < anonymitySetSize; ++i) {
+            address anon = anonymitySet[i];
+
+            ebool isSender = FHE.eq(senderIndex, uint8(i));
+            euint64 amount = FHE.select(FHE.and(validInputs, isSender), balanceChanges[i], FHE.asEuint64(0));
+
+            (ebool success, euint64 newBalance) = FHESafeMath.tryDecrease(_balances[anon], amount);
+            sufficientBalances = FHE.and(sufficientBalances, success);
+
+            _balances[anon] = newBalance;
+            FHE.allowThis(newBalance);
+            FHE.allow(newBalance, anon);
+        }
+
+        ebool proceed = FHE.and(validInputs, sufficientBalances);
+        for (uint256 i; i < anonymitySetSize; ++i) {
+            address anon = anonymitySet[i];
+
+            ebool isNotSender = FHE.ne(senderIndex, uint8(i));
+            euint64 amount = FHE.select(FHE.and(isNotSender, proceed), balanceChanges[i], FHE.asEuint64(0));
+
+            euint64 newBalance = FHE.add(_balances[anon], amount);
+
+            _balances[anon] = newBalance;
+            FHE.allowThis(newBalance);
+            FHE.allow(newBalance, anon);
+        }
 
         // todo: emit event
     }
