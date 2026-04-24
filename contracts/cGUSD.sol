@@ -294,10 +294,10 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
         emit ConfidentialTransfer(from, to, transferred);
     }
 
-    // Multi-transfer
+    // Anonymous transfer
 
     /// @dev sender addresses must be initialized (i.e. non-zero balance, encrypted zero balance is allowed)
-    function privateTransfer(
+    function anonymousTransfer(
         address[] memory from,
         address[] memory to,
         externalEuint128 encryptedSenderChange,

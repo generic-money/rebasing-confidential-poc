@@ -55,7 +55,7 @@ async function updateSecret(cGUSDContract: CGUSD, signer: HardhatEthersSigner, s
     await secretTx.wait();
 }
 
-async function privateTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, from: string[], to: string[], clearTransferAmount: number, clearReceiverChanges: number[]) {
+async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, from: string[], to: string[], clearTransferAmount: number, clearReceiverChanges: number[]) {
     const cGUSDContractAddress = await cGUSDContract.getAddress();
     const encryptedTransferAmounts = await fhevm
       .createEncryptedInput(cGUSDContractAddress, relayer.address)
@@ -78,7 +78,7 @@ async function privateTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigne
       .add256(commitment)
       .encrypt();
 
-    const privateTransferTx = await cGUSDContract.connect(relayer).privateTransfer(
+    const privateTransferTx = await cGUSDContract.connect(relayer).anonymousTransfer(
         from,
         to,
         encAmountHandle,
@@ -235,13 +235,13 @@ describe("cGUSD", function () {
     expect(clearDecryptedBalanceByClark).to.eq(clearTransferAmount);
   });
 
-  it("execute private transfer", async function() {
-    // execute private transfer from alice to receiver on index 1
+  it("execute anonymous transfer", async function() {
+    // execute anonymous transfer from alice to receiver on index 1
     const from = [signers.alice.address, signers.bob.address, signers.clark.address].sort();
     const to = receivers.map((r) => r.address).sort();
     const clearTransferAmount = 250;
     const clearReceiverChanges = [0, clearTransferAmount, 0];
-    await privateTransfer(cGUSDContract, relayer, secret, from, to, clearTransferAmount, clearReceiverChanges);
+    await anonymousTransfer(cGUSDContract, relayer, secret, from, to, clearTransferAmount, clearReceiverChanges);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, signers.alice)).to.eq(initialSupply - clearTransferAmount);

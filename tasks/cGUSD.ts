@@ -305,7 +305,7 @@ task("p:transfer", "Execute private transfer")
         const encryptedTransferCommitmentDuration = Date.now() - encryptedTransferCommitmentStart;
         console.log(`Transfer commitment encrypted (${encryptedTransferCommitmentDuration}ms)`);
 
-        const tx = await cGUSD.connect(relayer).privateTransfer(
+        const tx = await cGUSD.connect(relayer).anonymousTransfer(
             senders,
             receiversAddrs,
             encAmountHandle,
@@ -319,5 +319,5 @@ task("p:transfer", "Execute private transfer")
         const receipt = await tx.wait();
         console.log(`tx: ${tx.hash} status=${receipt?.status} gasUsed=${receipt?.gasUsed}`);
 
-        console.log(`Private transfer succeeded!`);
+        console.log(`Anonymous transfer succeeded!`);
     });
