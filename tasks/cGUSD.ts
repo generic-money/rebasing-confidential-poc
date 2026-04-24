@@ -235,55 +235,34 @@ task("p:secret", "Set user secret")
     });
 
 /**
-npx hardhat --network sepolia p:transfer --r 0 --f 1 --t 2 --a 1 --s 44 --sdecoys 3,4,5,6,7,8,9,10,11,12,13,14,15,16 --rdecoys 3,4,5,6,7,8,9,10,11,12,13,14,15,16
+npx hardhat --network sepolia p:transfer --r 0 --rc 1,0,0,0,0 --s 44 --senders 1,2,3,4,5 --receivers 1,2,3,4,5
 */
-// atm only 1-to-1 transfer
+// 1-to-n transfer
 task("p:transfer", "Execute private transfer")
     .addParam("r", "Relayer index in the signers list")
-    .addParam("f", "Sender index in the signers list")
-    .addParam("t", "Receiver index in the signers list")
-    .addParam("a", "Transfer amount")
+    .addParam("rc", "Receiver balance changes")
     .addParam("s", "Sender secret")
-    .addParam("sdecoys", "Comma-separated list of decoy indexes in the signers list")
-    .addParam("rdecoys", "Comma-separated list of decoy indexes in the signers list")
+    .addParam("senders", "Comma-separated list of decoy indexes in the signers list")
+    .addParam("receivers", "Comma-separated list of decoy indexes in the signers list")
     .setAction(async function (taskArguments: TaskArguments, hre) {
         const { ethers } = hre;
 
         const relayerIndex = parseInt(taskArguments.r);
-        if (!Number.isInteger(relayerIndex)) {
-            throw new Error(`Argument --r is not an integer`);
-        }
-        const fromIndex = parseInt(taskArguments.f);
-        if (!Number.isInteger(fromIndex)) {
-            throw new Error(`Argument --f is not an integer`);
-        }
-        const toIndex = parseInt(taskArguments.t);
-        if (!Number.isInteger(toIndex)) {
-            throw new Error(`Argument --t is not an integer`);
-        }
-        const amount = parseInt(taskArguments.a);
-        if (!Number.isInteger(amount)) {
-            throw new Error(`Argument --a is not an integer`);
-        }
         const secret = parseInt(taskArguments.s);
-        if (!Number.isInteger(secret)) {
-            throw new Error(`Argument --s is not an integer`);
-        }
-        let senderIndexes: number[] = taskArguments.sdecoys.split(",").map(Number);
-        let receiverIndexes: string[] = taskArguments.rdecoys.split(",").map(Number);
+        const senderIndexes: number[] = taskArguments.senders.split(",").map(Number);
+        const receiverIndexes: number[] = taskArguments.receivers.split(",").map(Number);
+        const balanceChanges: number[] = taskArguments.rc.split(",").map(Number); // need to sort as receivers
 
         const signers = await ethers.getSigners();
         const relayer = signers[relayerIndex];
 
-        senderIndexes.push(fromIndex);
         const senders = senderIndexes.map((i) => signers[i].address).sort(compareAddrs);
-        receiverIndexes.push(toIndex);
-        const receivers = receiverIndexes.map((i) => signers[i].address).sort(compareAddrs);
-
-        let receiverChanges: number[] = [];
-        for (const receiver of receivers) {
-            receiverChanges.push(receiver === signers[toIndex].address ? amount : 0);
-        }
+        const receivers = receiverIndexes.map((rIndex, i) => ({
+            address: signers[rIndex].address,
+            change: balanceChanges[i]
+        })).sort((a,b) => Number.parseInt(a.address) - Number.parseInt(b.address));
+        const receiversAddrs = receivers.map((r) => r.address);
+        const receiverChanges = receivers.map((r) => r.change);
 
         console.log("Inputs:");
         console.log("-------");
@@ -291,8 +270,6 @@ task("p:transfer", "Execute private transfer")
         console.log(senders);
         console.log("receivers:");
         console.log(receivers);
-        console.log("receiverChanges:");
-        console.log(receiverChanges);
 
         const cGUSD = await ethers.getContractAt("cGUSD", cGUSDAddress);
 
@@ -315,7 +292,7 @@ task("p:transfer", "Execute private transfer")
         const encReceiverChanges = encryptedTransferAmounts.handles.slice(1);
 
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-        const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [senders, receivers, encAmountHandle, encReceiverChanges]);
+        const encodedInput = abiCoder.encode(["address[]", "address[]", "bytes32", "bytes32[]"], [senders, receiversAddrs, encAmountHandle, encReceiverChanges]);
         const inputHash = ethers.keccak256(encodedInput);
         const commitment = BigInt(secret) ^ BigInt(inputHash);
 
@@ -330,7 +307,7 @@ task("p:transfer", "Execute private transfer")
 
         const tx = await cGUSD.connect(relayer).privateTransfer(
             senders,
-            receivers,
+            receiversAddrs,
             encAmountHandle,
             encReceiverChanges,
             encryptedTransferAmounts.inputProof,
