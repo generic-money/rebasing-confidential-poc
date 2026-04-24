@@ -327,7 +327,11 @@ contract cGUSD is ZamaEthereumConfig, ERC165, IERC7984 {
             require(_from != address(0), ERC7984InvalidSender(address(0)));
             if (i > 0) require(uint160(from[i - 1]) < uint160(_from), "Not sorted"); // enforce strictly increasing order to prevent duplicates
 
-            euint256 txSecret = FHE.xor(_privateSecret[_from], inputHash);
+            // Note: assuming every sender has a different secret
+            // If not, transfer amount is taken from all senders with the same secret
+            euint256 secret = _privateSecret[_from];
+            require(FHE.isInitialized(secret), "sender secret not initialized");
+            euint256 txSecret = FHE.xor(secret, inputHash);
             ebool isSender = FHE.eq(senderCommitment, txSecret);
             senderFound = FHE.or(senderFound, isSender);
             senderChanges[i] = FHE.select(isSender, senderChange, FHE.asEuint128(0));
