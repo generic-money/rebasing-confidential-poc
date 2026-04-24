@@ -100,6 +100,8 @@ describe("cGUSD", function () {
   let receivers: HardhatEthersSigner[];
   let relayer: HardhatEthersSigner;
 
+  const secret = BigInt(1);
+
   before(async function () {
     const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
     signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], clark: ethSigners[3] };
@@ -120,14 +122,17 @@ describe("cGUSD", function () {
     await mockERC20Contract.mint(signers.alice.address, initialSupply);
     await mockERC20Contract.connect(signers.alice).approve(cGUSDContractAddress, initialSupply);
     await cGUSDContract.connect(signers.alice).wrap(initialSupply);
+    await updateSecret(cGUSDContract, signers.alice, secret);
 
     await mockERC20Contract.mint(signers.bob.address, initialSupply);
     await mockERC20Contract.connect(signers.bob).approve(cGUSDContractAddress, initialSupply);
     await cGUSDContract.connect(signers.bob).wrap(initialSupply);
+    await updateSecret(cGUSDContract, signers.bob, secret);
 
     await mockERC20Contract.mint(signers.clark.address, initialSupply);
     await mockERC20Contract.connect(signers.clark).approve(cGUSDContractAddress, initialSupply);
     await cGUSDContract.connect(signers.clark).wrap(initialSupply);
+    await updateSecret(cGUSDContract, signers.clark, secret);
   });
 
   it("fetch current balance of owner", async function() {
@@ -231,10 +236,6 @@ describe("cGUSD", function () {
   });
 
   it("execute private transfer", async function() {
-    // set secret
-    const secret = BigInt(1);
-    await updateSecret(cGUSDContract, signers.alice, secret);
-
     // execute private transfer from alice to receiver on index 1
     const from = [signers.alice.address, signers.bob.address, signers.clark.address].sort();
     const to = receivers.map((r) => r.address).sort();
