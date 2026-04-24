@@ -2,7 +2,7 @@
 // OpenZeppelin Confidential Contracts (last updated v0.3.0) (token/ERC7984/utils/ERC7984Utils.sol)
 pragma solidity ^0.8.27;
 
-import {FHE, ebool, euint128} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, ebool, euint64} from "@fhevm/solidity/lib/FHE.sol";
 
 import {IERC7984Receiver} from "../interfaces/IERC7984Receiver.sol";
 
@@ -24,7 +24,7 @@ library ERC7984Utils {
         address operator,
         address from,
         address to,
-        euint128 amount,
+        euint64 amount,
         bytes calldata data
     ) internal returns (ebool) {
         if (to.code.length > 0) {

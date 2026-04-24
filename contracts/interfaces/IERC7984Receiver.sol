@@ -2,7 +2,7 @@
 // OpenZeppelin Confidential Contracts (last updated v0.3.0) (interfaces/IERC7984Receiver.sol)
 pragma solidity ^0.8.24;
 
-import {ebool, euint128} from "@fhevm/solidity/lib/FHE.sol";
+import {ebool, euint64} from "@fhevm/solidity/lib/FHE.sol";
 
 /// @dev Interface for contracts that can receive ERC7984 transfers with a callback.
 interface IERC7984Receiver {
@@ -13,7 +13,7 @@ interface IERC7984Receiver {
     function onConfidentialTransferReceived(
         address operator,
         address from,
-        euint128 amount,
+        euint64 amount,
         bytes calldata data
     ) external returns (ebool);
 }

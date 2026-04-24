@@ -161,7 +161,7 @@ task("c:balance", "Fetch user confidential balance")
         }
 
         const clearBalance = await fhevm.userDecryptEuint(
-            FhevmType.euint128,
+            FhevmType.euint64,
             encryptedBalance,
             cGUSDAddress,
             user,
@@ -191,7 +191,7 @@ task("c:transfer", "Transfer confidential tokens to receiver")
 
         const encryptedValue = await fhevm
             .createEncryptedInput(cGUSDAddress, user.address)
-            .add128(amount)
+            .add64(amount)
             .encrypt();
 
         const tx = await cGUSD.connect(user)["confidentialTransfer(address,bytes32,bytes)"](to, encryptedValue.handles[0], encryptedValue.inputProof);
@@ -280,9 +280,9 @@ task("p:transfer", "Execute private transfer")
         const encryptedTransferAmountsStart = Date.now();
         let input = fhevm
             .createEncryptedInput(cGUSDAddress, relayer.address)
-            .add128(amount);
+            .add64(amount);
         for (const receiverChange of receiverChanges) {
-            input.add128(receiverChange);
+            input.add64(receiverChange);
         }
         const encryptedTransferAmounts = await input.encrypt();
         const encryptedTransferAmountsDuration = Date.now() - encryptedTransferAmountsStart;

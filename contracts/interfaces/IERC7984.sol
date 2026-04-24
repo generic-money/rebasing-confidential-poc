@@ -2,7 +2,7 @@
 // OpenZeppelin Confidential Contracts (last updated v0.3.0) (interfaces/IERC7984.sol)
 pragma solidity ^0.8.24;
 
-import {euint128, externalEuint128} from "@fhevm/solidity/lib/FHE.sol";
+import {euint128, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
 
 /// @dev Draft interface for a confidential fungible token standard utilizing the Zama FHE library.
@@ -14,7 +14,7 @@ interface IERC7984 is IERC165 {
     event OperatorSet(address indexed holder, address indexed operator, uint48 until);
 
     /// @dev Emitted when a confidential transfer is made from `from` to `to` of encrypted amount `amount`.
-    event ConfidentialTransfer(address indexed from, address indexed to, euint128 indexed amount);
+    event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);
 
     /**
      * @dev Emitted when an encrypted amount is disclosed.
@@ -22,7 +22,7 @@ interface IERC7984 is IERC165 {
      * Accounts with access to the encrypted amount `encryptedAmount` that is also accessible to this contract
      * should be able to disclose the amount. This functionality is implementation specific.
      */
-    event AmountDisclosed(euint128 indexed encryptedAmount, uint128 amount);
+    event AmountDisclosed(euint64 indexed encryptedAmount, uint64 amount);
 
     /// @dev Returns the name of the token.
     function name() external view returns (string memory);
@@ -40,7 +40,7 @@ interface IERC7984 is IERC165 {
     function confidentialTotalSupply() external view returns (euint128);
 
     /// @dev Returns the confidential balance of the account `account`.
-    function confidentialBalanceOf(address account) external view returns (euint128);
+    function confidentialBalanceOf(address account) external view returns (euint64);
 
     /// @dev Returns true if `spender` is currently an operator for `holder`.
     function isOperator(address holder, address spender) external view returns (bool);
@@ -59,15 +59,15 @@ interface IERC7984 is IERC165 {
      */
     function confidentialTransfer(
         address to,
-        externalEuint128 encryptedAmount,
+        externalEuint64 encryptedAmount,
         bytes calldata inputProof
-    ) external returns (euint128);
+    ) external returns (euint64);
 
     /**
-     * @dev Similar to {confidentialTransfer-address-externalEuint128-bytes} but without an input proof. The caller
+     * @dev Similar to {confidentialTransfer-address-externalEuint64-bytes} but without an input proof. The caller
      * *must* already be allowed by ACL for the given `amount`.
      */
-    function confidentialTransfer(address to, euint128 amount) external returns (euint128 transferred);
+    function confidentialTransfer(address to, euint64 amount) external returns (euint64 transferred);
 
     /**
      * @dev Transfers the encrypted amount `encryptedAmount` from `from` to `to` with the given input proof
@@ -78,18 +78,18 @@ interface IERC7984 is IERC165 {
     function confidentialTransferFrom(
         address from,
         address to,
-        externalEuint128 encryptedAmount,
+        externalEuint64 encryptedAmount,
         bytes calldata inputProof
-    ) external returns (euint128);
+    ) external returns (euint64);
 
     /**
-     * @dev Similar to {confidentialTransferFrom-address-address-externalEuint128-bytes} but without an input proof.
+     * @dev Similar to {confidentialTransferFrom-address-address-externalEuint64-bytes} but without an input proof.
      * The caller *must* be already allowed by ACL for the given `amount`.
      */
-    function confidentialTransferFrom(address from, address to, euint128 amount) external returns (euint128 transferred);
+    function confidentialTransferFrom(address from, address to, euint64 amount) external returns (euint64 transferred);
 
     /**
-     * @dev Similar to {confidentialTransfer-address-externalEuint128-bytes} but with a callback to `to` after
+     * @dev Similar to {confidentialTransfer-address-externalEuint64-bytes} but with a callback to `to` after
      * the transfer.
      *
      * The callback is made to the {IERC7984Receiver-onConfidentialTransferReceived} function on the
@@ -98,39 +98,39 @@ interface IERC7984 is IERC165 {
      */
     function confidentialTransferAndCall(
         address to,
-        externalEuint128 encryptedAmount,
+        externalEuint64 encryptedAmount,
         bytes calldata inputProof,
         bytes calldata data
-    ) external returns (euint128 transferred);
+    ) external returns (euint64 transferred);
 
-    /// @dev Similar to {confidentialTransfer-address-euint128} but with a callback to `to` after the transfer.
+    /// @dev Similar to {confidentialTransfer-address-euint64} but with a callback to `to` after the transfer.
     function confidentialTransferAndCall(
         address to,
-        euint128 amount,
+        euint64 amount,
         bytes calldata data
-    ) external returns (euint128 transferred);
+    ) external returns (euint64 transferred);
 
     /**
-     * @dev Similar to {confidentialTransferFrom-address-address-externalEuint128-bytes} but with a callback to `to`
+     * @dev Similar to {confidentialTransferFrom-address-address-externalEuint64-bytes} but with a callback to `to`
      * after the transfer.
      */
     function confidentialTransferFromAndCall(
         address from,
         address to,
-        externalEuint128 encryptedAmount,
+        externalEuint64 encryptedAmount,
         bytes calldata inputProof,
         bytes calldata data
-    ) external returns (euint128 transferred);
+    ) external returns (euint64 transferred);
 
     /**
-     * @dev Similar to {confidentialTransferFrom-address-address-euint128} but with a callback to `to`
+     * @dev Similar to {confidentialTransferFrom-address-address-euint64} but with a callback to `to`
      * after the transfer.
      *
      */
     function confidentialTransferFromAndCall(
         address from,
         address to,
-        euint128 amount,
+        euint64 amount,
         bytes calldata data
-    ) external returns (euint128 transferred);
+    ) external returns (euint64 transferred);
 }
