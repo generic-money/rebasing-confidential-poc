@@ -231,17 +231,16 @@ describe("cGUSD", function () {
   it("execute anonymous transfer", async function() {
     // execute anonymous transfer from alice to receiver on index 1
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
-    const clearTransferAmount = 250;
-    const clearBalanceChanges = [0, clearTransferAmount, 0, 100, 150, 0];
+    const clearBalanceChanges = [0, 250, 0, 100, 150, 0];
     const receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
-    console.log(receipt?.gasUsed);
+    console.log(`Gas used: ${receipt?.gasUsed}`);
 
     // check final state
-    expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "0");
-    expect(await fetchClearBalance(cGUSDContract, anons[1])).to.eq(initialSupply - clearTransferAmount, "1");
-    expect(await fetchClearBalance(cGUSDContract, anons[2])).to.eq(initialSupply, "2");
-    expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "3");
-    expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "4");
-    expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "5");
+    expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
+    expect(await fetchClearBalance(cGUSDContract, anons[1])).to.eq(initialSupply - 250, "Incorrect balance: 1");
+    expect(await fetchClearBalance(cGUSDContract, anons[2])).to.eq(initialSupply, "Incorrect balance: 2");
+    expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "Incorrect balance: 3");
+    expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "Incorrect balance: 4");
+    expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
   });
 });

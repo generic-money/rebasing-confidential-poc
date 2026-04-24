@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import {FHE, externalEuint256, externalEuint64, externalEuint8, euint256, euint64, euint8, ebool} from "@fhevm/solidity/lib/FHE.sol";
 
-import {FHESafeMath} from "./utils/FHESafeMath.sol";
 import {cERC20, IERC20} from "./cERC20.sol";
 
 contract cGUSD is cERC20 {
