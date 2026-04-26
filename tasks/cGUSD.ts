@@ -302,9 +302,7 @@ task("p:transfer", "Execute private transfer")
 
         console.log("Encrypting balance changes...");
         const encryptedTransferInputsStart = Date.now();
-        let input = fhevm
-            .createEncryptedInput(cGUSDAddress, relayer.address)
-            .add8(senderIndexSorted);
+        let input = fhevm.createEncryptedInput(cGUSDAddress, relayer.address)
         for (const balanceChange of balanceChangesSorted) {
             input.add64(balanceChange);
         }
@@ -312,13 +310,10 @@ task("p:transfer", "Execute private transfer")
         const encryptedTransferInputsDuration = Date.now() - encryptedTransferInputsStart;
         console.log(`Transfer inputs encrypted (${encryptedTransferInputsDuration}ms)`);
 
-        const senderIndexHandle = encryptedTransferInputs.handles[0];
-        const balanceChangesHandles = encryptedTransferInputs.handles.slice(1);
-
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-        const encodedInput = abiCoder.encode(["address[]", "bytes32[]", "bytes32"], [anonAddrsSorted, balanceChangesHandles, senderIndexHandle]);
+        const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anonAddrsSorted, encryptedTransferInputs.handles]);
         const inputHash = ethers.keccak256(encodedInput);
-        const commitment = BigInt(secret) ^ BigInt(inputHash);
+        const commitment = BigInt(secret) ^ BigInt(inputHash) ^ BigInt(anons[senderIndexSorted].address);
 
         console.log("Encrypting transfer commitment...");
         const encryptedTransferCommitmentStart = Date.now();
@@ -331,8 +326,7 @@ task("p:transfer", "Execute private transfer")
 
         const tx = await cGUSD.connect(relayer).anonymousTransfer(
             anonAddrsSorted,
-            balanceChangesHandles,
-            senderIndexHandle,
+            encryptedTransferInputs.handles,
             encryptedTransferInputs.inputProof,
             encryptedTransferCommitment.handles[0],
             encryptedTransferCommitment.inputProof,

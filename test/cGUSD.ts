@@ -55,26 +55,23 @@ async function updateSecret(cGUSDContract: CGUSD, signer: HardhatEthersSigner, s
     await secretTx.wait();
 }
 
-async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, anons: string[], clearBalanceChanges: number[], clearSenderIndex: number) {
+async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, anons: string[], clearBalanceChanges: number[], senderIndex: number) {
     const cGUSDContractAddress = await cGUSDContract.getAddress();
 
     // Transfer inputs
     let transferInputs = fhevm
         .createEncryptedInput(cGUSDContractAddress, relayer.address)
-        .add8(clearSenderIndex)
     for (const change of clearBalanceChanges) {
       transferInputs.add64(change)
     }
-    const encryptedTransferInputs = await transferInputs.encrypt();
-    const encryptedSenderIndex = encryptedTransferInputs.handles[0];
-    const encryptedBalanceChanges = encryptedTransferInputs.handles.slice(1);
+    const encryptedInputs = await transferInputs.encrypt();
 
     // Input commitment
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-    const encodedInput = abiCoder.encode(["address[]", "bytes32[]", "bytes32"], [anons, encryptedBalanceChanges, encryptedSenderIndex]);
+    const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anons, encryptedInputs.handles]);
     const inputHash = ethers.keccak256(encodedInput);
-    const commitment = BigInt(secret) ^ BigInt(inputHash);
-    const encryptedTransferCommitment = await fhevm
+    const commitment = BigInt(secret) ^ BigInt(inputHash) ^ BigInt(anons[senderIndex]);
+    const encryptedCommitment = await fhevm
       .createEncryptedInput(cGUSDContractAddress, relayer.address)
       .add256(commitment)
       .encrypt();
@@ -82,17 +79,16 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
     // Execute transfer
     const privateTransferTx = await cGUSDContract.connect(relayer).anonymousTransfer(
         anons,
-        encryptedBalanceChanges,
-        encryptedSenderIndex,
-        encryptedTransferInputs.inputProof,
-        encryptedTransferCommitment.handles[0],
-        encryptedTransferCommitment.inputProof,
+        encryptedInputs.handles,
+        encryptedInputs.inputProof,
+        encryptedCommitment.handles[0],
+        encryptedCommitment.inputProof,
     );
     return await privateTransferTx.wait();
 }
 
 describe("cGUSD", function () {
-  let ethSigners: hersSigner[];
+  let ethSigners: HardhatEthersSigner[];
   let signers: Signers;
   let mockERC20Contract: MockERC20;
   let mockERC20ContractAddress: string;
@@ -233,7 +229,7 @@ describe("cGUSD", function () {
     // execute anonymous transfer from alice to receiver on index 1
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearBalanceChanges = [0, 250, 0, 100, 150, 0];
-    const receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
@@ -263,8 +259,23 @@ describe("cGUSD", function () {
     receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
     console.log(`12 anons gas used: ${receipt?.gasUsed}`);
 
+    anons = signersSorted.slice(1, 14);
+    clearBalanceChanges.push(0);
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`13 anons gas used: ${receipt?.gasUsed}`);
+
+    anons = signersSorted.slice(1, 15);
+    clearBalanceChanges.push(0);
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`14 anons gas used: ${receipt?.gasUsed}`);
+
+    anons = signersSorted.slice(1, 16);
+    clearBalanceChanges.push(0);
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`15 anons gas used: ${receipt?.gasUsed}`);
+
     anons = signersSorted.slice(1, 17);
-    for (let i = 0; i < 4; i++) { clearBalanceChanges.push(0); }
+    clearBalanceChanges.push(0);
     receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
     console.log(`16 anons gas used: ${receipt?.gasUsed}`);
   });

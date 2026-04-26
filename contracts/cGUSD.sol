@@ -46,7 +46,6 @@ contract cGUSD is cERC20 {
     function anonymousTransfer(
         address[] memory anonymitySet,
         externalEuint64[] memory encryptedBalanceChanges,
-        externalEuint8 encryptedSenderIndex,
         bytes memory inputProof,
         externalEuint256 encryptedSenderCommitment,
         bytes memory commitmentProof
@@ -57,10 +56,8 @@ contract cGUSD is cERC20 {
         require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
         require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
 
-        uint256 inputHash = uint256(keccak256(abi.encode(anonymitySet, encryptedBalanceChanges, encryptedSenderIndex)));
-
-        euint8 senderIndex = FHE.fromExternal(encryptedSenderIndex, inputProof);
-        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
+        uint256 inputHash = uint256(keccak256(abi.encode(anonymitySet, encryptedBalanceChanges)));
+        euint256 txCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
 
         // Validate inputs
         euint64[] memory balanceChanges = new euint64[](anonymitySetSize);
@@ -68,7 +65,7 @@ contract cGUSD is cERC20 {
         ebool[] memory isSender = new ebool[](anonymitySetSize);
         euint64 sumSenderBalanceChanges;
         ebool senderSufficientBalances = FHE.asEbool(true);
-        ebool validCommitment = FHE.asEbool(true);
+        ebool senderFound = FHE.asEbool(false);
         // Note: Any FHE operation here is executed anonymitySetSize-times. Minimize or cache.
         for (uint256 i; i < anonymitySetSize; ++i) {
             address anon = anonymitySet[i];
@@ -80,26 +77,25 @@ contract cGUSD is cERC20 {
             sumBalanceChanges = FHE.add(sumBalanceChanges, balanceChanges[i]);
             // todo: check for overflow
 
+            // Auth and input commit
+            euint256 secret = _privateSecret[anon];
+            euint256 anonCommitment = FHE.xor(FHE.xor(secret, inputHash), uint256(uint160(anon)));
+            // Note: will not revert on uninitialized secret, but cannot use the address as sender
+            ebool commitmentMatch = FHE.and(FHE.eq(anonCommitment, txCommitment), FHE.isInitialized(secret));
+            senderFound = FHE.or(senderFound, commitmentMatch);
+
             // Sender balance
-            isSender[i] = FHE.eq(senderIndex, uint8(i));
+            isSender[i] = commitmentMatch;
             euint64 senderBalanceChange = FHE.select(isSender[i], balanceChanges[i], FHE.asEuint64(0));
             sumSenderBalanceChanges = FHE.add(sumSenderBalanceChanges, senderBalanceChange);
             senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(_balances[anon], senderBalanceChange));
-
-            // Auth and input commit
-            euint256 secret = _privateSecret[anon];
-            euint256 txCommitment = FHE.xor(secret, inputHash);
-            // Note: will not revert on uninitialized secret, but cannot use the address as sender
-            ebool commitmentMatch = FHE.and(FHE.eq(txCommitment, senderCommitment), FHE.isInitialized(secret));
-            validCommitment = FHE.and(validCommitment, FHE.select(isSender[i], commitmentMatch, FHE.asEbool(true)));
         }
 
         // Note: sum of receiver balance changes must be eq to the sender balance change
         // ===> sum of all balance changes must be eq to 2x sender balance change (valid when all changes are zero)
         // Saves one FHE `select` operation in the loop.
         ebool validBalanceChanges = FHE.eq(sumBalanceChanges, FHE.add(sumSenderBalanceChanges, sumSenderBalanceChanges)); // `add` is cheaper than `mul`
-        ebool validSenderIndex = FHE.lt(senderIndex, uint8(anonymitySetSize));
-        ebool validInputs = FHE.and(validCommitment, FHE.and(validBalanceChanges, validSenderIndex));
+        ebool validInputs = FHE.and(senderFound, validBalanceChanges);
         ebool executeBalanceChanges = FHE.and(validInputs, senderSufficientBalances);
 
         // Inputs are valid when:
