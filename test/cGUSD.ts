@@ -92,6 +92,7 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
 }
 
 describe("cGUSD", function () {
+  let ethSigners: hersSigner[];
   let signers: Signers;
   let mockERC20Contract: MockERC20;
   let mockERC20ContractAddress: string;
@@ -104,7 +105,7 @@ describe("cGUSD", function () {
   const secret = 1n;
 
   before(async function () {
-    const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
+    ethSigners = await ethers.getSigners();
     signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], clark: ethSigners[3] };
     receivers = ethSigners.slice(0,6);
     relayer = ethSigners[7];
@@ -233,7 +234,6 @@ describe("cGUSD", function () {
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearBalanceChanges = [0, 250, 0, 100, 150, 0];
     const receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
-    console.log(`Gas used: ${receipt?.gasUsed}`);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
@@ -242,5 +242,30 @@ describe("cGUSD", function () {
     expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "Incorrect balance: 3");
     expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "Incorrect balance: 4");
     expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
+  });
+
+  it("measure gas of anonymous transfer", async function() {
+    // execute anonymous transfer from alice to receiver on index 1
+    const signersSorted = ethSigners.map((x) => x.address).toSorted((a, b) => Number(a) - Number(b));
+
+    let anons = signersSorted.slice(1, 5);
+    let clearBalanceChanges = [250, 250, 0, 0];
+    let receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`4 anons gas used: ${receipt?.gasUsed}`);
+
+    anons = signersSorted.slice(1, 9);
+    for (let i = 0; i < 4; i++) { clearBalanceChanges.push(0); }
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`8 anons gas used: ${receipt?.gasUsed}`);
+
+    anons = signersSorted.slice(1, 13);
+    for (let i = 0; i < 4; i++) { clearBalanceChanges.push(0); }
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`12 anons gas used: ${receipt?.gasUsed}`);
+
+    anons = signersSorted.slice(1, 17);
+    for (let i = 0; i < 4; i++) { clearBalanceChanges.push(0); }
+    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
+    console.log(`16 anons gas used: ${receipt?.gasUsed}`);
   });
 });

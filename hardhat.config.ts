@@ -47,14 +47,14 @@ const config: HardhatUserConfig = {
     hardhat: {
       accounts: {
         mnemonic: vars.get("MNEMONIC"),
+        count: 30,
       },
       chainId: 31337,
     },
     anvil: {
       accounts: {
         mnemonic: vars.get("MNEMONIC"),
-        path: "m/44'/60'/0'/0/",
-        count: 10,
+        count: 30,
       },
       chainId: 31337,
       url: "http://localhost:8545",
