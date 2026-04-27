@@ -1,4 +1,6 @@
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+
 import { ethers, fhevm } from "hardhat";
 import { CGUSD, MockERC20, CGUSD__factory, MockERC20__factory } from "../types";
 import { expect } from "chai";
@@ -313,6 +315,41 @@ describe("cGUSD", function () {
 
     const swleSecretTx = cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(encryptedSecret.handles[0]);
     await expect(swleSecretTx).to.be.revertedWith("Cannot request user secret");
+  });
+
+  it("fail on SWLE view after 30d", async function() {
+    const clearTransferAmount = 250;
+    const encryptedTransferAmount = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
+      .add64(clearTransferAmount)
+      .encrypt();
+
+    const tx = await cGUSDContract
+      .connect(signers.alice)
+      ["confidentialTransfer(address,bytes32,bytes)"](
+        signers.bob.address,
+        encryptedTransferAmount.handles[0],
+        encryptedTransferAmount.inputProof,
+      );
+    const receipt = await tx.wait();
+    const log = receipt!.logs.find((log) => log.eventName === "ConfidentialTransfer");
+    const transferAmount = log.args[2];
+
+    // increase time by 31 days
+    await time.increase(31 * 24 * 3600);
+
+    // Fail to request SWMLE
+    const swleTx = cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(transferAmount);
+    await expect(swleTx).to.be.revertedWith("Max history exceeded");
+
+    // Allow user decrypt
+    const clearAmount = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      transferAmount,
+      cGUSDContractAddress,
+      signers.alice,
+    );
+    expect(clearAmount).to.eq(clearTransferAmount);
   });
 
   it("measure gas of anonymous transfer", async function() {

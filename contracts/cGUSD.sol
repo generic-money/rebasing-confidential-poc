@@ -21,9 +21,11 @@ contract cGUSD is cERC20 {
     // Note: Current implementatino supports only one input ZKPoK that can fit 2048 bits of information.
     // (2048 - 8 (sender index)) / 64 = 31
     uint256 public constant MAX_ANONYMITY_SET = 31;
+    uint256 public constant MAX_HISTORY_REQUEST_DAYS = 30;
 
     mapping(address => euint256) internal _privateSecret;
     mapping(bytes32 => bool) internal _isSecret;
+    mapping(bytes32 => uint256) internal _handleCreationTime;
 
     event UserSecretUpdated(address indexed user);
     event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
@@ -33,21 +35,34 @@ contract cGUSD is cERC20 {
         cERC20(unitToken_, name_, symbol_, contractURI_)
     {}
 
+    /// @dev Users are prevented from fetching their secrets. They should set a new one if they lost the old one instead.
     function updateSecret(externalEuint256 encryptedNewSecret, bytes calldata inputProof) external {
         euint256 newSecret = FHE.fromExternal(encryptedNewSecret, inputProof);
         _privateSecret[msg.sender] = newSecret;
         _isSecret[euint256.unwrap(newSecret)] = true;
         FHE.allowThis(newSecret);
-        // users are prevented from fetching their secrets
-        // they should set a new one if they lost the old one instead
         emit UserSecretUpdated(msg.sender);
     }
 
-    function requestSpyWithMyLittleEyeView(bytes32 handle) external {
+    function requestSpyWithMyLittleEyeViews(bytes32[] calldata handles) external {
         // todo: only owner / role
+        for (uint256 i; i < handles.length; ++i) {
+            requestSpyWithMyLittleEyeView(handles[i]);
+        }
+    }
+
+    function requestSpyWithMyLittleEyeView(bytes32 handle) public {
         require(!_isSecret[handle], "Cannot request user secret");
+        require(block.timestamp - MAX_HISTORY_REQUEST_DAYS * 1 days <= _handleCreationTime[handle], "Max history exceeded");
         Impl.allow(handle, msg.sender);
         emit SpyWithMyLittleEyeViewRequested(msg.sender, handle);
+    }
+
+    function _update(address from, address to, euint64 amount) override internal virtual returns (euint64 transferred) {
+        transferred = super._update(from, to, amount);
+        _handleCreationTime[euint64.unwrap(transferred)] = block.timestamp;
+        _handleCreationTime[euint64.unwrap(_balances[from])] = block.timestamp;
+        _handleCreationTime[euint64.unwrap(_balances[to])] = block.timestamp;
     }
 
     // Anonymous transfer
@@ -144,6 +159,10 @@ contract cGUSD is cERC20 {
             FHE.allowThis(amount);
             FHE.allow(amount, anon);
             FHE.allowThis(isSender[i]);
+
+            _handleCreationTime[euint64.unwrap(newBalance)] = block.timestamp;
+            _handleCreationTime[euint64.unwrap(amount)] = block.timestamp;
+            _handleCreationTime[ebool.unwrap(isSender[i])] = block.timestamp;
         }
 
         emit AnonymousTransfer(msg.sender, anonymitySet, isSender, transferred);
