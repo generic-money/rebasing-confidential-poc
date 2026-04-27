@@ -25,6 +25,10 @@ contract cGUSD is cERC20 {
     mapping(address => euint256) internal _privateSecret;
     mapping(bytes32 => bool) internal _isSecret;
 
+    event UserSecretUpdated(address indexed user);
+    event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
+    event AnonymousTransfer(address indexed executor, address[] anonymitySet, ebool[] isSender, euint64[] balanceChanges);
+
     constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_)
         cERC20(unitToken_, name_, symbol_, contractURI_)
     {}
@@ -36,15 +40,14 @@ contract cGUSD is cERC20 {
         FHE.allowThis(newSecret);
         // users are prevented from fetching their secrets
         // they should set a new one if they lost the old one instead
-
-        // todo: emit event
+        emit UserSecretUpdated(msg.sender);
     }
 
     function requestSpyWithMyLittleEyeView(bytes32 handle) external {
         // todo: only owner / role
         require(!_isSecret[handle], "Cannot request user secret");
         Impl.allow(handle, msg.sender);
-        // todo: emit event
+        emit SpyWithMyLittleEyeViewRequested(msg.sender, handle);
     }
 
     // Anonymous transfer
@@ -125,6 +128,7 @@ contract cGUSD is cERC20 {
         // - bool variable about sender sufficient balance
 
         // Execute balance changes
+        euint64[] memory transferred = new euint64[](anonymitySetSize);
         for (uint256 i; i < anonymitySetSize; ++i) {
             address anon = anonymitySet[i];
             euint64 anonBalance = _balances[anon];
@@ -133,6 +137,7 @@ contract cGUSD is cERC20 {
             euint64 newBalance = FHE.select(isSender[i], FHE.sub(anonBalance, amount), FHE.add(anonBalance, amount));
 
             _balances[anon] = newBalance;
+            transferred[i] = amount;
 
             FHE.allowThis(newBalance);
             FHE.allow(newBalance, anon);
@@ -141,6 +146,6 @@ contract cGUSD is cERC20 {
             FHE.allowThis(isSender[i]);
         }
 
-        // todo: emit event anonymitySet, isSender, actual amounts
+        emit AnonymousTransfer(msg.sender, anonymitySet, isSender, transferred);
     }
 }
