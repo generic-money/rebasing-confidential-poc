@@ -119,11 +119,11 @@ describe("cGUSD", function () {
     ({ mockERC20Contract, mockERC20ContractAddress } = await deployMockUnitToken());
     ({ cGUSDContract, cGUSDContractAddress } = await deployCGUSD(mockERC20ContractAddress));
 
-    for (const receiver of receivers) {
-        await mockERC20Contract.mint(receiver.address, initialSupply);
-        await mockERC20Contract.connect(receiver).approve(cGUSDContractAddress, initialSupply);
-        await cGUSDContract.connect(receiver).wrap(initialSupply);
-        await updateSecret(cGUSDContract, receiver, secret);
+    for (const ethSigner of ethSigners) {
+        await mockERC20Contract.mint(ethSigner.address, initialSupply);
+        await mockERC20Contract.connect(ethSigner).approve(cGUSDContractAddress, initialSupply);
+        await cGUSDContract.connect(ethSigner).wrap(initialSupply);
+        await updateSecret(cGUSDContract, ethSigner, secret);
     }
   });
 
@@ -317,23 +317,8 @@ describe("cGUSD", function () {
     receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
     console.log(`12 anons gas used: ${receipt?.gasUsed}`);
 
-    anons = signersSorted.slice(1, 14);
-    clearBalanceChanges.push(0);
-    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
-    console.log(`13 anons gas used: ${receipt?.gasUsed}`);
-
-    anons = signersSorted.slice(1, 15);
-    clearBalanceChanges.push(0);
-    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
-    console.log(`14 anons gas used: ${receipt?.gasUsed}`);
-
-    anons = signersSorted.slice(1, 16);
-    clearBalanceChanges.push(0);
-    receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
-    console.log(`15 anons gas used: ${receipt?.gasUsed}`);
-
     anons = signersSorted.slice(1, 17);
-    clearBalanceChanges.push(0);
+    for (let i = 0; i < 4; i++) { clearBalanceChanges.push(0); }
     receipt = await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 0);
     console.log(`16 anons gas used: ${receipt?.gasUsed}`);
   });

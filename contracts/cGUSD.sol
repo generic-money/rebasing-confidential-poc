@@ -57,7 +57,7 @@ contract cGUSD is cERC20 {
         require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
 
         bytes32 inputHash = keccak256(abi.encode(anonymitySet, encryptedBalanceChanges));
-        euint256 txCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
+        euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
 
         // Validate inputs
         euint64[] memory balanceChanges = new euint64[](anonymitySetSize);
@@ -77,18 +77,20 @@ contract cGUSD is cERC20 {
             sumBalanceChanges = FHE.add(sumBalanceChanges, balanceChanges[i]);
             // todo: check for overflow
 
-            // Auth and input commit
             euint256 secret = _privateSecret[anon];
-            euint256 anonCommitment = FHE.xor(secret, uint256(keccak256(abi.encode(inputHash, anon))));
-            // Note: will not revert on uninitialized secret, but cannot use the address as sender
-            ebool commitmentMatch = FHE.and(FHE.eq(anonCommitment, txCommitment), FHE.isInitialized(secret));
-            senderFound = FHE.or(senderFound, commitmentMatch);
+            ebool commitmentMatch;
+            if (FHE.isInitialized(secret)) {
+                // Auth and input commitment
+                euint256 anonCommitment = FHE.xor(secret, uint256(keccak256(abi.encode(inputHash, anon))));
+                commitmentMatch = FHE.eq(anonCommitment, senderCommitment);
+                senderFound = FHE.or(senderFound, commitmentMatch);
 
-            // Sender balance
+                // Sender balance
+                euint64 senderBalanceChange = FHE.select(commitmentMatch, balanceChanges[i], FHE.asEuint64(0));
+                sumSenderBalanceChanges = FHE.add(sumSenderBalanceChanges, senderBalanceChange);
+                senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(_balances[anon], senderBalanceChange));
+            }
             isSender[i] = commitmentMatch;
-            euint64 senderBalanceChange = FHE.select(isSender[i], balanceChanges[i], FHE.asEuint64(0));
-            sumSenderBalanceChanges = FHE.add(sumSenderBalanceChanges, senderBalanceChange);
-            senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(_balances[anon], senderBalanceChange));
         }
 
         // Note: sum of receiver balance changes must be eq to the sender balance change
