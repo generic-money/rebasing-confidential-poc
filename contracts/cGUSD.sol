@@ -56,7 +56,7 @@ contract cGUSD is cERC20 {
         require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
         require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
 
-        uint256 inputHash = uint256(keccak256(abi.encode(anonymitySet, encryptedBalanceChanges)));
+        bytes32 inputHash = keccak256(abi.encode(anonymitySet, encryptedBalanceChanges));
         euint256 txCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
 
         // Validate inputs
@@ -79,7 +79,7 @@ contract cGUSD is cERC20 {
 
             // Auth and input commit
             euint256 secret = _privateSecret[anon];
-            euint256 anonCommitment = FHE.xor(FHE.xor(secret, inputHash), uint256(uint160(anon)));
+            euint256 anonCommitment = FHE.xor(secret, uint256(keccak256(abi.encode(inputHash, anon))));
             // Note: will not revert on uninitialized secret, but cannot use the address as sender
             ebool commitmentMatch = FHE.and(FHE.eq(anonCommitment, txCommitment), FHE.isInitialized(secret));
             senderFound = FHE.or(senderFound, commitmentMatch);

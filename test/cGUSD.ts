@@ -70,7 +70,9 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
     const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anons, encryptedInputs.handles]);
     const inputHash = ethers.keccak256(encodedInput);
-    const commitment = BigInt(secret) ^ BigInt(inputHash) ^ BigInt(anons[senderIndex]);
+    const encodedSenderInput = abiCoder.encode(["bytes32", "address"], [inputHash, anons[senderIndex]]);
+    const senderInputHash = ethers.keccak256(encodedSenderInput);
+    const commitment = BigInt(secret) ^ BigInt(senderInputHash);
     const encryptedCommitment = await fhevm
       .createEncryptedInput(cGUSDContractAddress, relayer.address)
       .add256(commitment)
@@ -238,6 +240,62 @@ describe("cGUSD", function () {
     expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "Incorrect balance: 3");
     expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "Incorrect balance: 4");
     expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
+  });
+
+  it("request SWLE view", async function() {
+    const encryptedAliceBalanceBefore = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
+
+    const clearTransferAmount = 250;
+    const encryptedTransferAmount = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
+      .add64(clearTransferAmount)
+      .encrypt();
+
+    const tx = await cGUSDContract
+      .connect(signers.alice)
+      ["confidentialTransfer(address,bytes32,bytes)"](
+        signers.bob.address,
+        encryptedTransferAmount.handles[0],
+        encryptedTransferAmount.inputProof,
+      );
+    const receipt = await tx.wait();
+    const log = receipt!.logs.find((log) => log.eventName === "ConfidentialTransfer");
+    const transferAmount = log.args[2];
+
+    const encryptedAliceBalanceAfter = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
+
+    const swleBalanceAfterTx = await cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(encryptedAliceBalanceAfter);
+    await swleBalanceAfterTx.wait();
+
+    const clearAliceBalance = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedAliceBalanceAfter,
+      cGUSDContractAddress,
+      signers.clark,
+    );
+    expect(clearAliceBalance).to.eq(initialSupply - clearTransferAmount);
+
+    const swleBalanceBeforeTx = await cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(encryptedAliceBalanceBefore);
+    await swleBalanceBeforeTx.wait();
+
+    const clearAliceBalanceBefore = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedAliceBalanceBefore,
+      cGUSDContractAddress,
+      signers.clark,
+    );
+    expect(clearAliceBalanceBefore).to.eq(initialSupply);
+
+    const swleTransferAmountTx = await cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(transferAmount);
+    await swleTransferAmountTx.wait();
+
+    const clearActualTransferAmount = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      transferAmount,
+      cGUSDContractAddress,
+      signers.clark,
+    );
+    expect(clearActualTransferAmount).to.eq(clearTransferAmount);
   });
 
   it("measure gas of anonymous transfer", async function() {
