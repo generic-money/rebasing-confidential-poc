@@ -23,6 +23,7 @@ contract cGUSD is cERC20 {
     uint256 public constant MAX_ANONYMITY_SET = 31;
 
     mapping(address => euint256) internal _privateSecret;
+    mapping(bytes32 => bool) internal _isSecret;
 
     constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_)
         cERC20(unitToken_, name_, symbol_, contractURI_)
@@ -31,10 +32,18 @@ contract cGUSD is cERC20 {
     function updateSecret(externalEuint256 encryptedNewSecret, bytes calldata inputProof) external {
         euint256 newSecret = FHE.fromExternal(encryptedNewSecret, inputProof);
         _privateSecret[msg.sender] = newSecret;
+        _isSecret[euint256.unwrap(newSecret)] = true;
         FHE.allowThis(newSecret);
-        // users are prevented from fetching their secret
+        // users are prevented from fetching their secrets
         // they should set a new one if they lost the old one instead
 
+        // todo: emit event
+    }
+
+    function requestSpyWithMyLittleEyeView(bytes32 handle) external {
+        // todo: only owner / role
+        require(!_isSecret[handle], "Cannot request user secret");
+        Impl.allow(handle, msg.sender);
         // todo: emit event
     }
 
@@ -124,10 +133,14 @@ contract cGUSD is cERC20 {
             euint64 newBalance = FHE.select(isSender[i], FHE.sub(anonBalance, amount), FHE.add(anonBalance, amount));
 
             _balances[anon] = newBalance;
+
             FHE.allowThis(newBalance);
             FHE.allow(newBalance, anon);
+            FHE.allowThis(amount);
+            FHE.allow(amount, anon);
+            FHE.allowThis(isSender[i]);
         }
 
-        // todo: emit event
+        // todo: emit event anonymitySet, isSender, actual amounts
     }
 }

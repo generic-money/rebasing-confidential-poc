@@ -3,11 +3,6 @@ import { ethers, fhevm } from "hardhat";
 import { CGUSD, MockERC20, CGUSD__factory, MockERC20__factory } from "../types";
 import { expect } from "chai";
 import { FhevmType } from "@fhevm/hardhat-plugin";
-import {
-  initSDK,
-  createInstance,
-  SepoliaConfig,
-} from '@zama-fhe/relayer-sdk/bundle';
 
 type Signers = {
   deployer: HardhatEthersSigner;
@@ -30,6 +25,11 @@ async function deployCGUSD(unitToken: string) {
   const cGUSDContractAddress = await cGUSDContract.getAddress();
 
   return { cGUSDContract, cGUSDContractAddress };
+}
+
+function inputHandleToString(handle) {
+    const buffer = Buffer.from(handle);
+    return `0x${buffer.toString("hex")}`;
 }
 
 async function fetchClearBalance(cGUSDContract: CGUSD, signer: HardhatEthersSigner) {
@@ -296,6 +296,23 @@ describe("cGUSD", function () {
       signers.clark,
     );
     expect(clearActualTransferAmount).to.eq(clearTransferAmount);
+  });
+
+  it("fail on SWLE view of secret", async function() {
+    const clearSecret = 250n;
+    const encryptedSecret = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, signers.alice.address)
+      .add256(clearSecret)
+      .encrypt();
+
+    const tx = await cGUSDContract.connect(signers.alice).updateSecret(
+      encryptedSecret.handles[0],
+      encryptedSecret.inputProof,
+    );
+    await tx.wait();
+
+    const swleSecretTx = cGUSDContract.connect(signers.clark).requestSpyWithMyLittleEyeView(encryptedSecret.handles[0]);
+    await expect(swleSecretTx).to.be.revertedWith("Cannot request user secret");
   });
 
   it("measure gas of anonymous transfer", async function() {
