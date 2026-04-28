@@ -2,7 +2,7 @@ import { task } from "hardhat/config";
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import type { TaskArguments } from "hardhat/types";
 
-const cGUSDAddress = "0xE98Fd322C8dEd61Fd7b4550Bba6f13f44e0A6601"; // latest cGUSD Sepolia deployment
+const cGUSDAddress = "0xA764f3EC83FE951D115B747134da2598B6D06F59"; // latest cGUSD Sepolia deployment
 const mock20Address = "0x2456ca90f5C89a07051De8645DC16109C615B0F5";
 
 function compareAddrs(a: string, b: string) {
@@ -57,9 +57,6 @@ task("setup:secret:all", "Set the same secrets to the first 30 test signers")
             const tx = await cGUSD.connect(user).updateSecret(encryptedValue.handles[0], encryptedValue.inputProof);
             console.log(`Waiting for tx: ${tx.hash}`);
 
-            const receipt = await tx.wait();
-            console.log(`tx: ${tx.hash} status=${receipt?.status}`);
-
             console.log(`Secret updated to ${secret}`);
         }
     });
@@ -94,7 +91,28 @@ task("m:mint", "Mint Mock20 tokens")
     });
 
 task("m:mint:all", "Mint Mock20 tokens to the first 30 test signers")
-task("m:approve:all", "Approve cGUSD to the first 30 test signers")
+    .addParam("amount", "Amount to mint")
+    .setAction(async function (taskArguments: TaskArguments, hre) {
+        const { ethers } = hre;
+
+        const amount = parseInt(taskArguments.amount);
+        if (!Number.isInteger(amount)) {
+            throw new Error(`Argument --amount is not an integer`);
+        }
+
+        const mock20 = await ethers.getContractAt("MockERC20", mock20Address);
+        const signers = await ethers.getSigners();
+
+        // Mint mock unit tokens
+        for (let i = 0; i < 30; i++) {
+            const tx = await mock20.connect(signers[i]).mint(signers[i].address, amount);
+            console.log(`Wait for tx: ${tx.hash}`);
+
+            console.log(`[${i}] ${signers[i].address} minting ${amount} MockERC20`);
+        }
+    });
+
+task("m:approve:all", "Approve Mock20 tokens to cGUSD to the first 30 test signers")
     .addParam("amount", "Amount to approve")
     .setAction(async function (taskArguments: TaskArguments, hre) {
         const { ethers } = hre;
@@ -108,7 +126,7 @@ task("m:approve:all", "Approve cGUSD to the first 30 test signers")
         const signers = await ethers.getSigners();
 
         for (let i = 0; i < 30; i++) {
-            // Mint mock unit tokens
+            // Approve mock unit tokens
             const tx = await mock20.connect(signers[i]).approve(cGUSDAddress, amount);
             console.log(`Wait for tx: ${tx.hash}`);
 
@@ -165,17 +183,25 @@ task("c:wrap:all", "Wraps Mock20 tokens of the first 30 test signers")
         }
     });
 
+
 task("c:balance", "Fetch user confidential balance")
+    .addParam("signer", "Index of the test signer")
     .setAction(async function (taskArguments: TaskArguments, hre) {
         const { ethers } = hre;
 
+        const index = parseInt(taskArguments.signer);
+        if (!Number.isInteger(index)) {
+            throw new Error(`Argument --signer is not an integer`);
+        }
+
+        console.log("Initializing CLI API...");
         await fhevm.initializeCLIApi();
 
         const cGUSD = await ethers.getContractAt("cGUSD", cGUSDAddress);
-
         const signers = await ethers.getSigners();
-        const user = signers[0];
+        const user = signers[index];
 
+        console.log("Fetching encrypted balance...");
         const encryptedBalance = await cGUSD.confidentialBalanceOf(user.address);
         if (encryptedBalance === ethers.ZeroHash) {
             console.log(`encrypted balance: ${encryptedBalance}`);
@@ -183,6 +209,7 @@ task("c:balance", "Fetch user confidential balance")
             return;
         }
 
+        console.log("Decrypting balance...");
         const clearBalance = await fhevm.userDecryptEuint(
             FhevmType.euint64,
             encryptedBalance,
@@ -191,6 +218,98 @@ task("c:balance", "Fetch user confidential balance")
         );
         console.log(`Encrypted balance: ${encryptedBalance}`);
         console.log(`Clear balance    : ${clearBalance}`);
+    });
+
+
+task("c:decrypt:bools", "User decrypts boolean values")
+    .addParam("signer", "Index of the test signer")
+    .addParam("handles", "Handles to decrypt")
+    .setAction(async function (taskArguments: TaskArguments, hre) {
+        const { ethers } = hre;
+
+        const index = parseInt(taskArguments.signer);
+        if (!Number.isInteger(index)) {
+            throw new Error(`Argument --signer is not an integer`);
+        }
+        const handles: string[] = taskArguments.handles.split(",").map(String).map((h: string) => `0x${h.toLowerCase()}`);
+
+        console.log("Initializing CLI API...");
+        await fhevm.initializeCLIApi();
+
+        const signers = await ethers.getSigners();
+
+        for (const handle of handles) {
+            console.log("Decrypting...");
+            const clearBool = await fhevm.userDecryptEbool(
+                handle,
+                cGUSDAddress,
+                signers[index],
+            );
+            console.log(`Handle : ${handle}`);
+            console.log(`Bool   : ${clearBool}`);
+        }
+    });
+
+
+task("c:decrypt:uint64s", "User decrypts uint64 values")
+    .addParam("signer", "Index of the test signer")
+    .addParam("handles", "Handles to decrypt")
+    .setAction(async function (taskArguments: TaskArguments, hre) {
+        const { ethers } = hre;
+
+        const index = parseInt(taskArguments.signer);
+        if (!Number.isInteger(index)) {
+            throw new Error(`Argument --signer is not an integer`);
+        }
+        const handles: string[] = taskArguments.handles.split(",").map(String).map((h: string) => `0x${h.toLowerCase()}`);
+
+        console.log("Initializing CLI API...");
+        await fhevm.initializeCLIApi();
+
+        const signers = await ethers.getSigners();
+
+        for (const handle of handles) {
+            console.log("Decrypting...");
+            const clearBool = await fhevm.userDecryptEuint(
+                FhevmType.euint64,
+                handle,
+                cGUSDAddress,
+                signers[index],
+            );
+            console.log(`Handle : ${handle}`);
+            console.log(`Uint64 : ${clearBool}`);
+        }
+    });
+
+
+task("c:swmle", "Request spy with my little eye view of a handle")
+    .addParam("signer", "Index of the test signer to grant the view")
+    .addParam("handles", "Handles to request SWLE view for, comma-separated")
+    .setAction(async function (taskArguments: TaskArguments, hre) {
+        const { ethers } = hre;
+
+        const index = parseInt(taskArguments.signer);
+        if (!Number.isInteger(index)) {
+            throw new Error(`Argument --signer is not an integer`);
+        }
+
+        const handles: string[] = taskArguments.handles.split(",").map(String).map((h: string) => `0x${h.toLowerCase()}`);
+
+        console.log("Initializing CLI API...");
+        await fhevm.initializeCLIApi();
+
+        const cGUSD = await ethers.getContractAt("cGUSD", cGUSDAddress);
+        const signers = await ethers.getSigners();
+        const user = signers[index];
+
+        console.log("Requesting Spy With My Little Eye view...");
+        const swmleTx = await cGUSD.connect(user).requestSpyWithMyLittleEyeViews(handles);
+        console.log(`Wait for tx: ${swmleTx.hash}`);
+
+        const receipt = await swmleTx.wait();
+        console.log(`tx: ${swmleTx.hash} status=${receipt?.status}`);
+
+        console.log(`Spy With My Little Eye view granted to ${user.address}`);
     });
 
 task("c:transfer", "Transfer confidential tokens to receiver")
@@ -292,8 +411,6 @@ task("p:transfer", "Execute private transfer")
         console.log("-------");
         console.log("anons:");
         console.log(anons);
-        console.log("sender index:");
-        console.log(senderIndexSorted);
 
         const cGUSD = await ethers.getContractAt("cGUSD", cGUSDAddress);
 
@@ -313,7 +430,9 @@ task("p:transfer", "Execute private transfer")
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
         const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anonAddrsSorted, encryptedTransferInputs.handles]);
         const inputHash = ethers.keccak256(encodedInput);
-        const commitment = BigInt(secret) ^ BigInt(inputHash) ^ BigInt(anons[senderIndexSorted].address);
+        const encodedSenderInput = abiCoder.encode(["bytes32", "address"], [inputHash, anonAddrsSorted[senderIndexSorted]]);
+        const senderInputHash = ethers.keccak256(encodedSenderInput);
+        const commitment = BigInt(secret) ^ BigInt(senderInputHash);
 
         console.log("Encrypting transfer commitment...");
         const encryptedTransferCommitmentStart = Date.now();
