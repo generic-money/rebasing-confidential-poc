@@ -16,7 +16,7 @@ import {Impl} from "@fhevm/solidity/lib/Impl.sol";
 import {cERC20, IERC20} from "./cERC20.sol";
 
 contract cGUSD is cERC20 {
-    string public constant VERSION = "v0.3";
+    string public constant VERSION = "v0.4";
 
     // Note: Current implementatino supports only one input ZKPoK that can fit 2048 bits of information.
     // (2048 - 8 (sender index)) / 64 = 31
@@ -29,7 +29,7 @@ contract cGUSD is cERC20 {
 
     event UserSecretUpdated(address indexed user);
     event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
-    event AnonymousTransfer(address indexed executor, address[] anonymitySet, ebool[] isSender, euint64[] balanceChanges);
+    event AnonymousTransfer(address[] anonymitySet, ebool[] isSender, euint64[] balanceChanges);
 
     constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_)
         cERC20(unitToken_, name_, symbol_, contractURI_)
@@ -92,7 +92,6 @@ contract cGUSD is cERC20 {
         ebool[] memory isSender = new ebool[](anonymitySetSize);
         euint64 sumSenderBalanceChanges;
         ebool senderSufficientBalances = FHE.asEbool(true);
-        ebool senderFound = FHE.asEbool(false);
         // Note: Any FHE operation here is executed anonymitySetSize-times. Minimize or cache.
         for (uint256 i; i < anonymitySetSize; ++i) {
             address anon = anonymitySet[i];
@@ -105,17 +104,17 @@ contract cGUSD is cERC20 {
             // todo: check for overflow
 
             euint256 secret = _privateSecret[anon];
-            ebool commitmentMatch;
-            if (FHE.isInitialized(secret)) {
+            euint64 anonBalance = _balances[anon];
+            ebool commitmentMatch = FHE.asEbool(false);
+            if (FHE.isInitialized(secret) && FHE.isInitialized(anonBalance)) {
                 // Auth and input commitment
                 euint256 anonCommitment = FHE.xor(secret, uint256(keccak256(abi.encode(inputHash, anon))));
                 commitmentMatch = FHE.eq(anonCommitment, senderCommitment);
-                senderFound = FHE.or(senderFound, commitmentMatch);
 
                 // Sender balance
                 euint64 senderBalanceChange = FHE.select(commitmentMatch, balanceChanges[i], FHE.asEuint64(0));
                 sumSenderBalanceChanges = FHE.add(sumSenderBalanceChanges, senderBalanceChange);
-                senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(_balances[anon], senderBalanceChange));
+                senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(anonBalance, senderBalanceChange));
             }
             isSender[i] = commitmentMatch;
         }
@@ -124,6 +123,7 @@ contract cGUSD is cERC20 {
         // ===> sum of all balance changes must be eq to 2x sender balance change (valid when all changes are zero)
         // Saves one FHE `select` operation in the loop.
         ebool validBalanceChanges = FHE.eq(sumBalanceChanges, FHE.add(sumSenderBalanceChanges, sumSenderBalanceChanges)); // `add` is cheaper than `mul`
+        ebool senderFound = FHE.gt(sumSenderBalanceChanges, 0); // sender balance change must be > 0, so we know sender is in the set and we have its index
         ebool validInputs = FHE.and(senderFound, validBalanceChanges);
         ebool executeBalanceChanges = FHE.and(validInputs, senderSufficientBalances);
 
@@ -165,6 +165,6 @@ contract cGUSD is cERC20 {
             _handleCreationTime[ebool.unwrap(isSender[i])] = block.timestamp;
         }
 
-        emit AnonymousTransfer(msg.sender, anonymitySet, isSender, transferred);
+        emit AnonymousTransfer(anonymitySet, isSender, transferred);
     }
 }
