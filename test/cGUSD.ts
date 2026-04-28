@@ -244,6 +244,21 @@ describe("cGUSD", function () {
     expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
   });
 
+  it("execute zero balance anonymous transfer", async function() {
+    // execute anonymous transfer from alice to receiver on index 1
+    const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
+    const clearBalanceChanges = [0, 0, 0, 0, 0, 0];
+    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+
+    // check final state
+    expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
+    expect(await fetchClearBalance(cGUSDContract, anons[1])).to.eq(initialSupply, "Incorrect balance: 1");
+    expect(await fetchClearBalance(cGUSDContract, anons[2])).to.eq(initialSupply, "Incorrect balance: 2");
+    expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply, "Incorrect balance: 3");
+    expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply, "Incorrect balance: 4");
+    expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
+  });
+
   it("request SWLE view", async function() {
     const encryptedAliceBalanceBefore = await cGUSDContract.confidentialBalanceOf(signers.alice.address);
 
