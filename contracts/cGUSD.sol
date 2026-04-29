@@ -21,11 +21,9 @@ contract cGUSD is cERC20 {
     // Note: Current implementatino supports only one input ZKPoK that can fit 2048 bits of information.
     // (2048 - 8 (sender index)) / 64 = 31
     uint256 public constant MAX_ANONYMITY_SET = 31;
-    uint256 public constant MAX_HISTORY_REQUEST_DAYS = 30;
 
     mapping(address => euint256) internal _privateSecret;
     mapping(bytes32 => bool) internal _isSecret;
-    mapping(bytes32 => uint256) internal _handleCreationTime;
 
     event UserSecretUpdated(address indexed user);
     event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
@@ -54,16 +52,8 @@ contract cGUSD is cERC20 {
 
     function requestSpyWithMyLittleEyeView(bytes32 handle) public {
         require(!_isSecret[handle], "Cannot request user secret");
-        require(block.timestamp - MAX_HISTORY_REQUEST_DAYS * 1 days <= _handleCreationTime[handle], "Max history exceeded");
         Impl.allow(handle, msg.sender);
         emit SpyWithMyLittleEyeViewRequested(msg.sender, handle);
-    }
-
-    function _update(address from, address to, euint64 amount) override internal virtual returns (euint64 transferred) {
-        transferred = super._update(from, to, amount);
-        _handleCreationTime[euint64.unwrap(transferred)] = block.timestamp;
-        _handleCreationTime[euint64.unwrap(_balances[from])] = block.timestamp;
-        _handleCreationTime[euint64.unwrap(_balances[to])] = block.timestamp;
     }
 
     // Anonymous transfer
@@ -121,27 +111,11 @@ contract cGUSD is cERC20 {
         }
 
         // Note: sum of receiver balance changes must be eq to the sender balance change
-        // ===> sum of all balance changes must be eq to 2x sender balance change (valid when all changes are zero)
-        // Saves one FHE `select` operation in the loop.
+        // ===> sum of all balance changes must be eq to 2x sender balance change (valid even when all changes are zero)
         ebool validBalanceChanges = FHE.eq(sumBalanceChanges, FHE.add(sumSenderBalanceChanges, sumSenderBalanceChanges)); // `add` is cheaper than `mul`
         ebool senderFound = FHE.gt(sumSenderBalanceChanges, 0); // sender balance change must be > 0, so we know sender is in the set and we have its index
         ebool validInputs = FHE.and(senderFound, validBalanceChanges);
         ebool executeBalanceChanges = FHE.and(validInputs, senderSufficientBalances);
-
-        // Inputs are valid when:
-        // - sender index is in range -> we have one sender, with balance change and secret
-        // - sender change matches sum of receiver changes
-        // - sender knows its own secret
-        // - inputs match the tx commitment with senders secret
-
-        // Following invariants hold implicitly:
-        // - only one negative balance change (only one sender index)
-        // - all changes are non-negative
-
-        // At this point we have:
-        // - list of addresses paired with balances changes, without duplicates
-        // - index of sender balance change
-        // - bool variable about sender sufficient balance
 
         // Execute balance changes
         euint64[] memory transferred = new euint64[](anonymitySetSize);
@@ -160,10 +134,6 @@ contract cGUSD is cERC20 {
             FHE.allowThis(amount);
             FHE.allow(amount, anon);
             FHE.allowThis(isSender[i]);
-
-            _handleCreationTime[euint64.unwrap(newBalance)] = block.timestamp;
-            _handleCreationTime[euint64.unwrap(amount)] = block.timestamp;
-            _handleCreationTime[ebool.unwrap(isSender[i])] = block.timestamp;
         }
 
         emit AnonymousTransfer(anonymitySet, isSender, transferred);
@@ -240,16 +210,10 @@ contract cGUSD is cERC20 {
             FHE.allow(newBalance, anon);
             FHE.allowThis(amount);
             FHE.allow(amount, anon);
-
-            _handleCreationTime[euint64.unwrap(newBalance)] = block.timestamp;
-            _handleCreationTime[euint64.unwrap(amount)] = block.timestamp;
         }
 
         FHE.allowThis(senderIndex);
         FHE.allowThis(receiverIndex);
-
-        _handleCreationTime[euint8.unwrap(senderIndex)] = block.timestamp;
-        _handleCreationTime[euint8.unwrap(receiverIndex)] = block.timestamp;
 
         emit AnonymousTransfer2(anonymitySet, senderIndex, receiverIndex, transferred);
     }
