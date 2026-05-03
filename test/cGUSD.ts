@@ -56,8 +56,9 @@ async function updateSecret(cGUSDContract: CGUSD, signer: HardhatEthersSigner, s
     await secretTx.wait();
 }
 
-async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, anons: string[], clearBalanceChanges: number[], senderIndex: number) {
+async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSigner, secret: BigInt, anons: HardhatEthersSigner[], clearBalanceChanges: number[], senderIndex: number) {
     const cGUSDContractAddress = await cGUSDContract.getAddress();
+    const anonsAddrs = anons.map((x) => x.address);
 
     // Transfer inputs
     let transferInputs = fhevm
@@ -69,9 +70,9 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
 
     // Input commitment
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-    const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anons, encryptedInputs.handles]);
+    const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anonsAddrs, encryptedInputs.handles]);
     const inputHash = ethers.keccak256(encodedInput);
-    const encodedSenderInput = abiCoder.encode(["bytes32", "address"], [inputHash, anons[senderIndex]]);
+    const encodedSenderInput = abiCoder.encode(["bytes32", "address"], [inputHash, anonsAddrs[senderIndex]]);
     const senderInputHash = ethers.keccak256(encodedSenderInput);
     const commitment = BigInt(secret) ^ BigInt(senderInputHash);
     const encryptedCommitment = await fhevm
@@ -81,7 +82,7 @@ async function anonymousTransfer(cGUSDContract: CGUSD, relayer: HardhatEthersSig
 
     // Execute transfer
     const privateTransferTx = await cGUSDContract.connect(relayer).anonymousTransfer(
-        anons,
+        anonsAddrs,
         encryptedInputs.handles,
         encryptedInputs.inputProof,
         encryptedCommitment.handles[0],
@@ -268,7 +269,7 @@ describe("cGUSD", function () {
     // execute anonymous transfer from alice to receiver on index 1
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearBalanceChanges = [0, 250, 0, 100, 150, 0];
-    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+    await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 1);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
@@ -279,11 +280,68 @@ describe("cGUSD", function () {
     expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
   });
 
+  it("prevent replay attacks", async function() {
+    // execute anonymous transfer from alice to receiver on index 1
+    const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
+    const anonsAddrs = anons.map((x) => x.address);
+    const clearBalanceChanges = [0, 250, 0, 100, 150, 0];
+    const senderIndex = 1;
+    const cGUSDContractAddress = await cGUSDContract.getAddress();
+
+    // Transfer inputs
+    let transferInputs = fhevm
+        .createEncryptedInput(cGUSDContractAddress, relayer.address)
+    for (const change of clearBalanceChanges) {
+      transferInputs.add64(change)
+    }
+    const encryptedInputs = await transferInputs.encrypt();
+
+    // Input commitment
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    const encodedInput = abiCoder.encode(["address[]", "bytes32[]"], [anonsAddrs, encryptedInputs.handles]);
+    const inputHash = ethers.keccak256(encodedInput);
+    const encodedSenderInput = abiCoder.encode(["bytes32", "address"], [inputHash, anonsAddrs[senderIndex]]);
+    const senderInputHash = ethers.keccak256(encodedSenderInput);
+    const commitment = BigInt(secret) ^ BigInt(senderInputHash);
+    const encryptedCommitment = await fhevm
+      .createEncryptedInput(cGUSDContractAddress, relayer.address)
+      .add256(commitment)
+      .encrypt();
+
+    // Execute transfer
+    const privateTransferTx = await cGUSDContract.connect(relayer).anonymousTransfer(
+        anonsAddrs,
+        encryptedInputs.handles,
+        encryptedInputs.inputProof,
+        encryptedCommitment.handles[0],
+        encryptedCommitment.inputProof,
+    );
+    await privateTransferTx.wait();
+
+    // check final state
+    expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
+    expect(await fetchClearBalance(cGUSDContract, anons[1])).to.eq(initialSupply - 250, "Incorrect balance: 1");
+    expect(await fetchClearBalance(cGUSDContract, anons[2])).to.eq(initialSupply, "Incorrect balance: 2");
+    expect(await fetchClearBalance(cGUSDContract, anons[3])).to.eq(initialSupply + 100, "Incorrect balance: 3");
+    expect(await fetchClearBalance(cGUSDContract, anons[4])).to.eq(initialSupply + 150, "Incorrect balance: 4");
+    expect(await fetchClearBalance(cGUSDContract, anons[5])).to.eq(initialSupply, "Incorrect balance: 5");
+
+    // replay
+    const privateTransferTx2 = cGUSDContract.connect(relayer).anonymousTransfer(
+        anonsAddrs,
+        encryptedInputs.handles,
+        encryptedInputs.inputProof,
+        encryptedCommitment.handles[0],
+        encryptedCommitment.inputProof,
+    );
+    await expect(privateTransferTx2).to.be.revertedWith("Commitment used");
+  });
+
   it("execute zero balance anonymous transfer", async function() {
     // execute anonymous transfer from alice to receiver on index 1
     const anons = receivers.toSorted((a, b) => Number(a.address) - Number(b.address));
     const clearBalanceChanges = [0, 0, 0, 0, 0, 0];
-    await anonymousTransfer(cGUSDContract, relayer, secret, anons.map((x) => x.address), clearBalanceChanges, 1);
+    await anonymousTransfer(cGUSDContract, relayer, secret, anons, clearBalanceChanges, 1);
 
     // check final state
     expect(await fetchClearBalance(cGUSDContract, anons[0])).to.eq(initialSupply, "Incorrect balance: 0");
@@ -369,7 +427,7 @@ describe("cGUSD", function () {
 
   it("measure gas of anonymous transfer", async function() {
     // execute anonymous transfer from alice to receiver on index 1
-    const signersSorted = ethSigners.map((x) => x.address).toSorted((a, b) => Number(a) - Number(b));
+    const signersSorted = ethSigners.toSorted((a, b) => Number(a.address) - Number(b.address));
 
     let anons = signersSorted.slice(1, 5);
     let clearBalanceChanges = [250, 250, 0, 0];

@@ -24,6 +24,7 @@ contract cGUSD is cERC20 {
 
     mapping(address => euint256) internal _privateSecret;
     mapping(bytes32 => bool) internal _isSecret;
+    mapping(bytes32 => bool) internal _usedCommitments; // to prevent replay attacks
 
     event UserSecretUpdated(address indexed user);
     event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
@@ -56,6 +57,10 @@ contract cGUSD is cERC20 {
         emit SpyWithMyLittleEyeViewRequested(msg.sender, handle);
     }
 
+    function usedCommitments(bytes32 commitmentHandle) external view returns (bool) {
+        return _usedCommitments[commitmentHandle];
+    }
+
     // Anonymous transfer
 
     /// @dev sender balance must be initialized (i.e. non-zero balance, encrypted zero balance is allowed)
@@ -77,6 +82,10 @@ contract cGUSD is cERC20 {
         bytes32 inputHash = keccak256(abi.encode(anonymitySet, encryptedBalanceChanges));
         euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
 
+        bytes32 commitmentHandle = euint256.unwrap(senderCommitment);
+        require(!_usedCommitments[commitmentHandle], "Commitment used");
+        _usedCommitments[commitmentHandle] = true;
+
         // Validate inputs
         euint64[] memory balanceChanges = new euint64[](anonymitySetSize);
         euint64 sumBalanceChanges;
@@ -96,26 +105,25 @@ contract cGUSD is cERC20 {
 
             euint256 secret = _privateSecret[anon];
             euint64 anonBalance = _balances[anon];
-            ebool commitmentMatch = FHE.asEbool(false);
+            ebool anonIsSender = FHE.asEbool(false);
             if (FHE.isInitialized(secret) && FHE.isInitialized(anonBalance)) {
                 // Auth and input commitment
                 euint256 anonCommitment = FHE.xor(secret, uint256(keccak256(abi.encode(inputHash, anon))));
-                commitmentMatch = FHE.eq(anonCommitment, senderCommitment);
+                anonIsSender = FHE.eq(anonCommitment, senderCommitment);
 
                 // Sender balance
-                euint64 senderBalanceChange = FHE.select(commitmentMatch, balanceChanges[i], FHE.asEuint64(0));
+                euint64 senderBalanceChange = FHE.select(anonIsSender, balanceChanges[i], FHE.asEuint64(0));
                 sumSenderBalanceChanges = FHE.add(sumSenderBalanceChanges, senderBalanceChange);
                 senderSufficientBalances = FHE.and(senderSufficientBalances, FHE.ge(anonBalance, senderBalanceChange));
             }
-            isSender[i] = commitmentMatch;
+            isSender[i] = anonIsSender;
         }
 
         // Note: sum of receiver balance changes must be eq to the sender balance change
         // ===> sum of all balance changes must be eq to 2x sender balance change (valid even when all changes are zero)
         ebool validBalanceChanges = FHE.eq(sumBalanceChanges, FHE.add(sumSenderBalanceChanges, sumSenderBalanceChanges)); // `add` is cheaper than `mul`
-        ebool senderFound = FHE.gt(sumSenderBalanceChanges, 0); // sender balance change must be > 0, so we know sender is in the set and we have its index
-        ebool validInputs = FHE.and(senderFound, validBalanceChanges);
-        ebool executeBalanceChanges = FHE.and(validInputs, senderSufficientBalances);
+        ebool senderFound = FHE.gt(sumSenderBalanceChanges, 0); // sender balance change must be > 0, so we know sender is in the set
+        ebool executeBalanceChanges = FHE.and(senderFound, FHE.and(validBalanceChanges, senderSufficientBalances));
 
         // Execute balance changes
         euint64[] memory transferred = new euint64[](anonymitySetSize);
@@ -161,6 +169,11 @@ contract cGUSD is cERC20 {
         euint8 receiverIndex = FHE.fromExternal(encryptedReceiverIndex, inputProof);
         euint64 balanceChange = FHE.fromExternal(encryptedBalanceChange, inputProof);
         euint256 senderCommitment = FHE.fromExternal(encryptedSenderCommitment, commitmentProof);
+
+        // Prevent replay attack
+        bytes32 commitmentHandle = euint256.unwrap(senderCommitment);
+        require(!_usedCommitments[commitmentHandle], "Commitment used");
+        _usedCommitments[commitmentHandle] = true;
 
         // Validate inputs
         ebool indexesInRange = FHE.and(FHE.lt(senderIndex, uint8(anonymitySetSize)), FHE.lt(receiverIndex, uint8(anonymitySetSize)));
