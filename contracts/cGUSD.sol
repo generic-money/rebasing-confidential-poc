@@ -30,6 +30,7 @@ contract cGUSD is cERC20 {
     event SpyWithMyLittleEyeViewRequested(address indexed requester, bytes32 indexed handle);
     event AnonymousTransfer(address[] anonymitySet, ebool[] isSender, euint64[] balanceChanges);
     event AnonymousTransfer2(address[] anonymitySet, euint8 senderIndex, euint8 receiverIndex, euint64 balanceChange);
+    event AnonymousTransfer3(address indexed sender, address[] anonymitySet, euint64[] balanceChanges);
 
     constructor(IERC20 unitToken_, string memory name_, string memory symbol_, string memory contractURI_)
         cERC20(unitToken_, name_, symbol_, contractURI_)
@@ -229,5 +230,69 @@ contract cGUSD is cERC20 {
         FHE.allowThis(receiverIndex);
 
         emit AnonymousTransfer2(anonymitySet, senderIndex, receiverIndex, transferred);
+    }
+
+    /// @dev public sender, anonymous receivers, multi-transfer
+    function anonymousTransfer3(
+        address[] memory anonymitySet,
+        externalEuint64[] memory encryptedBalanceChanges,
+        bytes memory inputProof
+    ) external {
+        // Array input checks
+        uint256 anonymitySetSize = anonymitySet.length;
+        require(anonymitySetSize > 0, "Empty anonymity set");
+        require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
+        require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
+
+        address sender = msg.sender;
+
+        // Validate inputs
+        euint64[] memory balanceChanges = new euint64[](anonymitySetSize);
+        euint64 sumBalanceChanges;
+        // Note: Any FHE operation here is executed anonymitySetSize-times. Minimize or cache.
+        for (uint256 i; i < anonymitySetSize; ++i) {
+            address anon = anonymitySet[i];
+            require(anon != address(0), "Zero address in anonymity set");
+            if (i > 0) require(uint160(anonymitySet[i - 1]) < uint160(anon), "Not sorted"); // enforce strictly increasing order to prevent duplicates
+
+            // Balance changes
+            balanceChanges[i] = FHE.fromExternal(encryptedBalanceChanges[i], inputProof);
+            sumBalanceChanges = FHE.add(sumBalanceChanges, balanceChanges[i]);
+            // todo: check for overflow
+        }
+
+        // Check sender balance
+        euint64 senderBalance = _balances[sender];
+        ebool senderSufficientBalance = FHE.ge(senderBalance, sumBalanceChanges);
+
+        // Sender balance change
+        euint64 amount = FHE.select(senderSufficientBalance, sumBalanceChanges, FHE.asEuint64(0));
+        euint64 newBalance = FHE.sub(senderBalance, amount);
+
+        _balances[sender] = newBalance;
+
+        FHE.allowThis(newBalance);
+        FHE.allow(newBalance, sender);
+        FHE.allowThis(amount);
+        FHE.allow(amount, sender);
+
+        // Receivers balance changes
+        euint64[] memory transferred = new euint64[](anonymitySetSize);
+        for (uint256 i; i < anonymitySetSize; ++i) {
+            address anon = anonymitySet[i];
+            euint64 anonBalance = _balances[anon];
+            amount = FHE.select(senderSufficientBalance, balanceChanges[i], FHE.asEuint64(0));
+            newBalance = FHE.add(anonBalance, amount);
+
+            _balances[anon] = newBalance;
+            transferred[i] = amount;
+
+            FHE.allowThis(newBalance);
+            FHE.allow(newBalance, anon);
+            FHE.allowThis(amount);
+            FHE.allow(amount, anon);
+        }
+
+        emit AnonymousTransfer3(sender, anonymitySet, transferred);
     }
 }
