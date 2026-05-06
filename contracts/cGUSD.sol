@@ -76,7 +76,7 @@ contract cGUSD is cERC20 {
     ) external {
         // Array input checks
         uint256 anonymitySetSize = anonymitySet.length;
-        require(anonymitySetSize > 0, "Empty anonymity set");
+        require(anonymitySetSize > 1, "Anonymity set too small");
         require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
         require(anonymitySetSize == encryptedBalanceChanges.length, "Length mismatch");
 
@@ -160,7 +160,7 @@ contract cGUSD is cERC20 {
         bytes memory commitmentProof
     ) external {
         uint256 anonymitySetSize = anonymitySet.length;
-        require(anonymitySetSize > 0, "Empty anonymity set");
+        require(anonymitySetSize > 1, "Anonymity set too small");
         require(anonymitySetSize <= MAX_ANONYMITY_SET, "Anonymity set too big");
 
         bytes32 inputHash = keccak256(abi.encode(anonymitySet, encryptedSenderIndex, encryptedReceiverIndex, encryptedBalanceChange));
