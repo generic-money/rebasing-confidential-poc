@@ -143,6 +143,7 @@ contract cGUSD is cERC20 {
             FHE.allowThis(amount);
             FHE.allow(amount, anon);
             FHE.allowThis(isSender[i]);
+            FHE.allow(isSender[i], anon);
         }
 
         emit AnonymousTransfer(anonymitySet, isSender, transferred);
